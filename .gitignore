@@ -1,0 +1,80 @@
+# Build results
+bin/
+obj/
+out/
+publish/
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Visual Studio
+.vs/
+*.vscode/
+
+# Rider
+.idea/
+
+# NuGet
+packages/
+*.nupkg
+*.snupkg
+
+# Test results
+TestResults/
+[Tt]est[Rr]esult*/
+*.trx
+
+# Coverage reports
+coverage*/
+
+# Log files
+*.log
+logs/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Backup files
+*.bak
+*.backup
+
+# Application data (don't commit user data)
+AppData/
+*.db
+*.ldb
+
+# Runtime files
+*.pdb
+*.dll.config
+*.exe.config
+
+# Package files
+*.nupkg
+*.snupkg
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# User secrets
+secrets.json
+appsettings.*.json
+
+# System files to ignore
+nul
+NUL

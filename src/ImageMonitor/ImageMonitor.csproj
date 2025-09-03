@@ -1,0 +1,41 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MVVM -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+    
+    <!-- Database -->
+    <PackageReference Include="LiteDB" Version="5.0.19" />
+    
+    <!-- Logging -->
+    <PackageReference Include="Serilog" Version="3.1.1" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+    <PackageReference Include="Serilog.Sinks.Debug" Version="2.0.0" />
+    
+    <!-- Dependency Injection -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.0" />
+    
+    <!-- Image Processing -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.6" />
+    
+    <!-- Archive Processing -->
+    <PackageReference Include="SharpZipLib" Version="1.4.2" />
+    <PackageReference Include="SharpCompress" Version="0.34.2" />
+    
+    <!-- WPF Folder Dialog -->
+    <PackageReference Include="Microsoft.WindowsAPICodePack-Shell" Version="1.1.0" />
+  </ItemGroup>
+
+</Project>

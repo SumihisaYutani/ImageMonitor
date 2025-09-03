@@ -1,0 +1,267 @@
+﻿<Window x:Class="ImageMonitor.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:ImageMonitor.Views"
+        mc:Ignorable="d"
+        Title="設定 - ImageMonitor" Height="650" Width="800"
+        MinHeight="500" MinWidth="600"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+        
+        <Style x:Key="GroupBoxStyle" TargetType="GroupBox">
+            <Setter Property="Margin" Value="8"/>
+            <Setter Property="Padding" Value="8"/>
+            <Setter Property="BorderBrush" Value="LightGray"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        
+        <Style x:Key="ButtonStyle" TargetType="Button">
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Margin" Value="4"/>
+            <Setter Property="MinWidth" Value="100"/>
+        </Style>
+        
+        <Style x:Key="LabelStyle" TargetType="Label">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,4"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- メインコンテンツ -->
+        <TabControl Grid.Row="0" Margin="8">
+            
+            <!-- スキャン設定タブ -->
+            <TabItem Header="スキャン設定">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        
+                        <!-- スキャンディレクトリ -->
+                        <GroupBox Header="スキャン対象フォルダ" Style="{StaticResource GroupBoxStyle}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                
+                                <!-- ディレクトリリスト -->
+                                <ListBox Grid.Column="0" Grid.Row="0" 
+                                         ItemsSource="{Binding ScanDirectories}"
+                                         SelectedItem="{Binding SelectedDirectory}"
+                                         Height="150"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" ToolTip="{Binding}"/>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                
+                                <!-- ボタン -->
+                                <StackPanel Grid.Column="1" Grid.Row="0" Orientation="Vertical" Margin="8,0,0,0">
+                                    <Button Content="追加" Command="{Binding AddDirectoryCommand}" Style="{StaticResource ButtonStyle}"/>
+                                    <Button Content="削除" Command="{Binding RemoveDirectoryCommand}" Style="{StaticResource ButtonStyle}"/>
+                                </StackPanel>
+                                
+                                <!-- 説明 -->
+                                <TextBlock Grid.Column="0" Grid.Row="1" Grid.ColumnSpan="2"
+                                           Text="画像ファイルや画像アーカイブをスキャンする対象フォルダを指定してください。"
+                                           Foreground="Gray" FontSize="11" Margin="0,4,0,0"/>
+                            </Grid>
+                        </GroupBox>
+
+                        <!-- アーカイブ設定 -->
+                        <GroupBox Header="アーカイブ設定" Style="{StaticResource GroupBoxStyle}">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    
+                                    <Label Grid.Column="0" Content="画像比率閾値:" Style="{StaticResource LabelStyle}"/>
+                                    <Slider Grid.Column="1" 
+                                            Value="{Binding ImageRatioThreshold}" 
+                                            Minimum="0" Maximum="1" 
+                                            TickFrequency="0.1" IsSnapToTickEnabled="True"
+                                            Margin="8,4"/>
+                                    <TextBlock Grid.Column="2" 
+                                               Text="{Binding ImageRatioThreshold, StringFormat=P0}" 
+                                               VerticalAlignment="Center" MinWidth="40"/>
+                                </Grid>
+                                <TextBlock Text="アーカイブ内の画像ファイルの割合がこの値以上の場合のみ、検索対象に含まれます。"
+                                           Foreground="Gray" FontSize="11" Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            
+            <!-- サムネイル設定タブ -->
+            <TabItem Header="サムネイル設定">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        
+                        <!-- サムネイル生成設定 -->
+                        <GroupBox Header="サムネイル生成" Style="{StaticResource GroupBoxStyle}">
+                            <StackPanel>
+                                <CheckBox Content="サムネイル生成を有効にする" 
+                                          IsChecked="{Binding EnableThumbnailGeneration}"
+                                          Margin="0,4"/>
+                                
+                                <Grid IsEnabled="{Binding EnableThumbnailGeneration}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    
+                                    <Label Grid.Column="0" Content="サムネイルサイズ:" Style="{StaticResource LabelStyle}"/>
+                                    <ComboBox Grid.Column="1" 
+                                              ItemsSource="{Binding ThumbnailSizes}"
+                                              SelectedItem="{Binding ThumbnailSize}"
+                                              Width="100" HorizontalAlignment="Left" Margin="8,4"/>
+                                </Grid>
+                                
+                                <TextBlock Text="サムネイルはキャッシュされ、次回アクセス時に高速表示されます。"
+                                           Foreground="Gray" FontSize="11" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- キャッシュ管理 -->
+                        <GroupBox Header="キャッシュ管理" Style="{StaticResource GroupBoxStyle}">
+                            <StackPanel>
+                                <WrapPanel>
+                                    <Button Content="キャッシュクリア" 
+                                            Command="{Binding ClearThumbnailCacheCommand}" 
+                                            Style="{StaticResource ButtonStyle}"/>
+                                    <Button Content="古いキャッシュ削除" 
+                                            Command="{Binding CleanupOldThumbnailsCommand}" 
+                                            Style="{StaticResource ButtonStyle}"/>
+                                </WrapPanel>
+                                <TextBlock Text="キャッシュクリア: すべてのサムネイルキャッシュを削除します。&#x0a;古いキャッシュ削除: 30日以上アクセスされていないキャッシュを削除します。"
+                                           Foreground="Gray" FontSize="11" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            
+            <!-- 表示設定タブ -->
+            <TabItem Header="表示設定">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        
+                        <!-- ウィンドウ設定 -->
+                        <GroupBox Header="ウィンドウ設定" Style="{StaticResource GroupBoxStyle}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                
+                                <Label Grid.Row="0" Grid.Column="0" Content="幅:" Style="{StaticResource LabelStyle}"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" 
+                                         Text="{Binding WindowWidth}" 
+                                         Width="100" HorizontalAlignment="Left" Margin="8,4"/>
+                                
+                                <Label Grid.Row="1" Grid.Column="0" Content="高さ:" Style="{StaticResource LabelStyle}"/>
+                                <TextBox Grid.Row="1" Grid.Column="1" 
+                                         Text="{Binding WindowHeight}" 
+                                         Width="100" HorizontalAlignment="Left" Margin="8,4"/>
+                                
+                                <CheckBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                                          Content="起動時に最大化" 
+                                          IsChecked="{Binding WindowMaximized}"
+                                          Margin="0,8,0,0"/>
+                            </Grid>
+                        </GroupBox>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            
+            <!-- ログ設定タブ -->
+            <TabItem Header="ログ設定">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        
+                        <!-- ログ設定 -->
+                        <GroupBox Header="ログ出力" Style="{StaticResource GroupBoxStyle}">
+                            <StackPanel>
+                                <CheckBox Content="ログ出力を有効にする" 
+                                          IsChecked="{Binding EnableLogging}"
+                                          Margin="0,4"/>
+                                
+                                <Grid IsEnabled="{Binding EnableLogging}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    
+                                    <Label Grid.Row="0" Grid.Column="0" Content="ログレベル:" Style="{StaticResource LabelStyle}"/>
+                                    <ComboBox Grid.Row="0" Grid.Column="1" 
+                                              ItemsSource="{Binding LogLevels}"
+                                              SelectedItem="{Binding LogLevel}"
+                                              Width="120" HorizontalAlignment="Left" Margin="8,4"/>
+                                    
+                                    <Label Grid.Row="1" Grid.Column="0" Content="保持日数:" Style="{StaticResource LabelStyle}"/>
+                                    <TextBox Grid.Row="1" Grid.Column="1" 
+                                             Text="{Binding MaxLogFiles}" 
+                                             Width="100" HorizontalAlignment="Left" Margin="8,4"/>
+                                </Grid>
+                                
+                                <TextBlock Text="ログファイルはApplicationData\ImageMonitor\Logsフォルダに保存されます。"
+                                           Foreground="Gray" FontSize="11" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            
+        </TabControl>
+
+        <!-- ボタン -->
+        <Border Grid.Row="1" Background="LightGray" BorderBrush="Gray" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="8">
+                <Button Content="リセット" 
+                        Command="{Binding ResetSettingsCommand}" 
+                        Style="{StaticResource ButtonStyle}"/>
+                <Button Content="OK" 
+                        Click="OK_Click"
+                        Style="{StaticResource ButtonStyle}" 
+                        IsDefault="True"/>
+                <Button Content="キャンセル" 
+                        Click="Cancel_Click"
+                        Style="{StaticResource ButtonStyle}" 
+                        IsCancel="True"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>
