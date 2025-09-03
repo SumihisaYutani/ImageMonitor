@@ -33,6 +33,8 @@ public class ImageItem
     
     public string? InternalPath { get; set; }
     
+    public decimal? ArchiveImageRatio { get; set; }
+    
     public string? ImageFormat { get; set; }
     
     public int? ColorDepth { get; set; }

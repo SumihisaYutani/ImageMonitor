@@ -285,10 +285,11 @@ public class ImageScanService : IImageScanService
             {
                 var thumbnailPath = await _thumbnailService.GenerateArchiveThumbnailAsync(archivePath, settings.ThumbnailSize);
                 
-                // すべてのアーカイブ内アイテムに同じサムネイルを設定
+                // すべてのアーカイブ内アイテムに同じサムネイルとImageRatioを設定
                 foreach (var item in results)
                 {
                     item.ThumbnailPath = thumbnailPath;
+                    item.ArchiveImageRatio = imageRatio;
                 }
             }
 

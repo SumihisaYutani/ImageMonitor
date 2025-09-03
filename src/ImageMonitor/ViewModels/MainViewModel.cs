@@ -11,6 +11,7 @@ public partial class MainViewModel : ObservableObject
     private readonly ILauncherService _launcherService;
     private readonly ILogger<MainViewModel> _logger;
     private CancellationTokenSource _cancellationTokenSource = new();
+    private CancellationTokenSource _searchDelayTokenSource = new();
 
     [ObservableProperty]
     private ObservableCollection<ImageItem> _imageItems = new();
@@ -290,7 +291,27 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnImageRatioThresholdChanged(decimal value)
     {
-        _ = SearchImagesAsync();
+        _ = DelayedSearchAsync();
+    }
+
+    private async Task DelayedSearchAsync()
+    {
+        // Cancel any existing delayed search
+        _searchDelayTokenSource.Cancel();
+        _searchDelayTokenSource = new CancellationTokenSource();
+
+        try
+        {
+            // Wait for a short delay to debounce slider changes
+            await Task.Delay(300, _searchDelayTokenSource.Token);
+            
+            // Execute search if not cancelled
+            await SearchImagesAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancelled due to rapid slider changes, ignore
+        }
     }
 
     private void OnScanProgress(object? sender, ScanProgressEventArgs e)

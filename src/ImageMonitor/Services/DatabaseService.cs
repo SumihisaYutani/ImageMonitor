@@ -47,6 +47,7 @@ public class DatabaseService : IDatabaseService
             _imageItems.EnsureIndex(x => x.IsDeleted);
             _imageItems.EnsureIndex(x => x.IsArchived);
             _imageItems.EnsureIndex(x => x.ArchivePath);
+            _imageItems.EnsureIndex(x => x.ArchiveImageRatio);
             _imageItems.EnsureIndex(x => x.Width);
             _imageItems.EnsureIndex(x => x.Height);
             
@@ -211,6 +212,12 @@ public class DatabaseService : IDatabaseService
             if (!filter.IncludeArchives)
             {
                 query = query.Where(x => !x.IsArchived);
+            }
+            else
+            {
+                // Apply ImageRatioThreshold only to archived items
+                query = query.Where(x => !x.IsArchived || 
+                                        (x.IsArchived && x.ArchiveImageRatio >= filter.ImageRatioThreshold));
             }
             
             if (filter.MinFileSize.HasValue)
