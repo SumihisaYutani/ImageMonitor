@@ -50,6 +50,10 @@ public class ImageItem
         ? $"Archive: {Path.GetFileName(ArchivePath)}" 
         : string.Empty;
 
+    public string DisplayName => IsArchived && !string.IsNullOrEmpty(ArchivePath) 
+        ? Path.GetFileNameWithoutExtension(ArchivePath)
+        : Path.GetFileNameWithoutExtension(FileName);
+
     private static string FormatFileSize(long bytes)
     {
         string[] sizes = { "B", "KB", "MB", "GB" };

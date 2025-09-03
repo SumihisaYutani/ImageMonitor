@@ -103,7 +103,7 @@
                 
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Border Style="{StaticResource CardStyle}" Width="150" Height="180">
+                        <Border Style="{StaticResource CardStyle}" Width="150" Height="200">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="120"/>
@@ -119,19 +119,25 @@
                                 
                                 <!-- Information -->
                                 <StackPanel Grid.Row="1" Margin="0,4,0,0">
-                                    <TextBlock Text="{Binding FileName}" 
+                                    <TextBlock Text="{Binding DisplayName}" 
                                                FontWeight="Bold" 
+                                               FontSize="11"
                                                TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding FileName}"/>
+                                               ToolTip="{Binding DisplayName}"
+                                               MaxHeight="32"
+                                               TextWrapping="Wrap"/>
                                     <TextBlock Text="{Binding Resolution}" 
                                                FontSize="10" 
-                                               Foreground="Gray"/>
+                                               Foreground="Gray"
+                                               Margin="0,2,0,0"/>
                                     <TextBlock Text="{Binding FormattedFileSize}" 
                                                FontSize="10" 
                                                Foreground="Gray"/>
                                     <TextBlock Text="{Binding ArchiveInfo}" 
-                                               FontSize="10" 
+                                               FontSize="9" 
                                                Foreground="Blue"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding ArchiveInfo}"
                                                Visibility="{Binding IsArchived, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                 </StackPanel>
                             </Grid>
