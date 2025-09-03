@@ -103,7 +103,7 @@
                 
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Border Style="{StaticResource CardStyle}" Width="150" Height="200">
+                        <Border Style="{StaticResource CardStyle}" Width="150" Height="180">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="120"/>
@@ -133,12 +133,6 @@
                                     <TextBlock Text="{Binding FormattedFileSize}" 
                                                FontSize="10" 
                                                Foreground="Gray"/>
-                                    <TextBlock Text="{Binding ArchiveInfo}" 
-                                               FontSize="9" 
-                                               Foreground="Blue"
-                                               TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding ArchiveInfo}"
-                                               Visibility="{Binding IsArchived, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                 </StackPanel>
                             </Grid>
                             

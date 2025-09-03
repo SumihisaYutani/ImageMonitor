@@ -215,9 +215,11 @@ public class DatabaseService : IDatabaseService
             }
             else
             {
-                // Apply ImageRatioThreshold only to archived items
+                // Apply ImageRatioThreshold only to archived items with valid ArchiveImageRatio
                 query = query.Where(x => !x.IsArchived || 
-                                        (x.IsArchived && x.ArchiveImageRatio >= filter.ImageRatioThreshold));
+                                        (x.IsArchived && 
+                                         x.ArchiveImageRatio.HasValue && 
+                                         x.ArchiveImageRatio >= filter.ImageRatioThreshold));
             }
             
             if (filter.MinFileSize.HasValue)
