@@ -9,6 +9,8 @@ public interface IDatabaseService : IDisposable
     // ImageItem operations
     Task<IEnumerable<ImageItem>> GetAllImageItemsAsync();
     
+    Task<IEnumerable<ImageItem>> GetImageItemsAsync(int skip = 0, int take = 100);
+    
     Task<ImageItem?> GetImageItemByIdAsync(string id);
     
     Task<ImageItem?> GetImageItemByPathAsync(string filePath);
@@ -20,6 +22,8 @@ public interface IDatabaseService : IDisposable
     Task<bool> DeleteImageItemAsync(string id);
     
     Task<int> BulkInsertImageItemsAsync(IEnumerable<ImageItem> imageItems);
+    
+    Task<int> StreamInsertImageItemsAsync(IAsyncEnumerable<ImageItem> imageItems, CancellationToken cancellationToken = default);
     
     Task<IEnumerable<ImageItem>> SearchImageItemsAsync(SearchFilter filter);
     
@@ -39,7 +43,21 @@ public interface IDatabaseService : IDisposable
     Task<bool> DeleteArchiveItemAsync(string id);
     
     Task<long> GetArchiveItemCountAsync();
+    Task<IEnumerable<ArchiveItem>> GetArchiveItemsAsync(int offset, int limit);
+    Task<IEnumerable<ImageItem>> GetNonArchivedImageItemsAsync(int offset, int limit);
+    Task<bool> UpsertArchiveItemAsync(ArchiveItem archiveItem);
     
+    // ScanHistory operations
+    Task<bool> InsertScanHistoryAsync(ScanHistory scanHistory);
+    
+    Task<ScanHistory?> GetLastScanHistoryAsync(string directoryPath);
+    
+    Task<IEnumerable<ScanHistory>> GetScanHistoryAsync(string directoryPath, int limit = 10);
+    
+    Task<IEnumerable<string>> GetScannedDirectoriesAsync();
+    
+    Task<int> CleanupItemsByDirectoryAsync(string directoryPath);
+
     // Maintenance operations
     Task<int> CleanupDeletedItemsAsync();
     

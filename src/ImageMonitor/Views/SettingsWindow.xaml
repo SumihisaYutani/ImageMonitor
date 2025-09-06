@@ -84,30 +84,6 @@
                             </Grid>
                         </GroupBox>
 
-                        <!-- アーカイブ設定 -->
-                        <GroupBox Header="アーカイブ設定" Style="{StaticResource GroupBoxStyle}">
-                            <StackPanel>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    
-                                    <Label Grid.Column="0" Content="画像比率閾値:" Style="{StaticResource LabelStyle}"/>
-                                    <Slider Grid.Column="1" 
-                                            Value="{Binding ImageRatioThreshold}" 
-                                            Minimum="0" Maximum="1" 
-                                            TickFrequency="0.1" IsSnapToTickEnabled="True"
-                                            Margin="8,4"/>
-                                    <TextBlock Grid.Column="2" 
-                                               Text="{Binding ImageRatioThreshold, StringFormat=P0}" 
-                                               VerticalAlignment="Center" MinWidth="40"/>
-                                </Grid>
-                                <TextBlock Text="アーカイブ内の画像ファイルの割合がこの値以上の場合のみ、検索対象に含まれます。"
-                                           Foreground="Gray" FontSize="11" Margin="0,4,0,0"/>
-                            </StackPanel>
-                        </GroupBox>
 
                     </StackPanel>
                 </ScrollViewer>
@@ -134,7 +110,7 @@
                                     <Label Grid.Column="0" Content="サムネイルサイズ:" Style="{StaticResource LabelStyle}"/>
                                     <ComboBox Grid.Column="1" 
                                               ItemsSource="{Binding ThumbnailSizes}"
-                                              SelectedItem="{Binding ThumbnailSize}"
+                                              SelectedItem="{Binding ThumbnailSize, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                               Width="100" HorizontalAlignment="Left" Margin="8,4"/>
                                 </Grid>
                                 

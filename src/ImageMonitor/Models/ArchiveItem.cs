@@ -1,6 +1,6 @@
 namespace ImageMonitor.Models;
 
-public class ArchiveItem
+public class ArchiveItem : IDisplayItem
 {
     [BsonId]
     public string Id { get; set; } = string.Empty;
@@ -30,8 +30,12 @@ public class ArchiveItem
     public List<ImageInArchive> Images { get; set; } = new();
     
     public bool IsDeleted { get; set; }
+    
+    public string? ThumbnailPath { get; set; }
 
     // Computed properties
+    public string DisplayName => Path.GetFileNameWithoutExtension(FileName);
+    public bool IsArchived => true; // ArchiveItemは常にアーカイブ
     public string FormattedFileSize => FormatFileSize(FileSize);
     
     public string ImageRatioPercentage => $"{ImageRatio:P0}";

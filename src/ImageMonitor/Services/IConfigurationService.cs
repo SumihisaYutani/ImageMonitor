@@ -4,7 +4,7 @@ namespace ImageMonitor.Services;
 
 public interface IConfigurationService
 {
-    Task<AppSettings> GetSettingsAsync();
+    Task<AppSettings> GetSettingsAsync(bool forceReload = false);
     
     Task SaveSettingsAsync(AppSettings settings);
     

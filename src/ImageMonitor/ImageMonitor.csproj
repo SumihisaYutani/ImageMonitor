@@ -8,6 +8,19 @@
     <UseWPF>true</UseWPF>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
+    
+    <!-- シンプルなビルド出力パス設定 -->
+    <OutputPath>..\..\build\net8.0-windows\</OutputPath>
+    <PublishDir>..\..\build\standalone\</PublishDir>
+    
+    <!-- フレームワーク依存ビルド設定（サブディレクトリ作成を防ぐ） -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    
+    <!-- 単独実行ファイル設定（publishのみ） -->
+    <PublishSingleFile Condition="'$(Configuration)' == 'Release'">true</PublishSingleFile>
+    <SelfContained Condition="'$(Configuration)' == 'Release'">false</SelfContained>
+    <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
   <ItemGroup>

@@ -12,6 +12,21 @@ public partial class SettingsWindow : Window
         DataContext = ViewModel;
         
         InitializeComponent();
+        
+        // ウィンドウ表示後に設定を再読み込み
+        Loaded += async (s, e) => 
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("SettingsWindow: Loaded event triggered");
+                await ViewModel.LoadSettingsAsync();
+                System.Diagnostics.Debug.WriteLine($"SettingsWindow: Settings loaded, ScanDirectories count = {ViewModel.ScanDirectories.Count}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"SettingsWindow: Error in Loaded event: {ex}");
+            }
+        };
     }
 
     private async void OK_Click(object sender, RoutedEventArgs e)

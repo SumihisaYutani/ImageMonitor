@@ -15,14 +15,22 @@ public class LauncherService : ILauncherService
 
     public async Task<bool> LaunchAssociatedAppAsync(string filePath)
     {
-        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+        if (string.IsNullOrEmpty(filePath))
         {
-            _logger.LogWarning("File not found: {FilePath}", filePath);
+            _logger.LogWarning("LaunchAssociatedAppAsync: File path is null or empty");
+            return false;
+        }
+        
+        if (!File.Exists(filePath))
+        {
+            _logger.LogWarning("LaunchAssociatedAppAsync: File not found: {FilePath}", filePath);
             return false;
         }
 
         try
         {
+            _logger.LogInformation("LaunchAssociatedAppAsync: Attempting to launch associated app for: {FilePath}", filePath);
+            
             var startInfo = new ProcessStartInfo
             {
                 FileName = filePath,
@@ -32,12 +40,18 @@ public class LauncherService : ILauncherService
 
             using var process = Process.Start(startInfo);
             
-            _logger.LogInformation("Launched associated app for: {FilePath}", filePath);
+            if (process == null)
+            {
+                _logger.LogWarning("LaunchAssociatedAppAsync: Process.Start returned null for: {FilePath}", filePath);
+                return false;
+            }
+            
+            _logger.LogInformation("LaunchAssociatedAppAsync: Successfully launched associated app for: {FilePath}", filePath);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to launch associated app for: {FilePath}", filePath);
+            _logger.LogError(ex, "LaunchAssociatedAppAsync: Failed to launch associated app for: {FilePath}", filePath);
             return false;
         }
     }
@@ -139,58 +153,106 @@ public class LauncherService : ILauncherService
 
     public async Task<bool> ShowInExplorerAsync(string filePath)
     {
-        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+        if (string.IsNullOrEmpty(filePath))
         {
-            _logger.LogWarning("File not found: {FilePath}", filePath);
+            _logger.LogWarning("ShowInExplorerAsync: File path is null or empty");
+            return false;
+        }
+        
+        if (!File.Exists(filePath))
+        {
+            _logger.LogWarning("ShowInExplorerAsync: File not found: {FilePath}", filePath);
             return false;
         }
 
         try
         {
+            _logger.LogInformation("ShowInExplorerAsync: Attempting to show file in explorer: {FilePath}", filePath);
+            
             var startInfo = new ProcessStartInfo
             {
                 FileName = "explorer.exe",
                 Arguments = $"/select,\"{filePath}\"",
-                UseShellExecute = false
+                // Explorer はシェルとして起動する方が安定
+                UseShellExecute = true,
+                CreateNoWindow = true
             };
+
+            _logger.LogDebug("ShowInExplorerAsync: Starting process with arguments: {Arguments}", startInfo.Arguments);
 
             using var process = Process.Start(startInfo);
             
-            _logger.LogInformation("Showed file in explorer: {FilePath}", filePath);
+            if (process == null)
+            {
+                _logger.LogWarning("ShowInExplorerAsync: Process.Start returned null for: {FilePath}", filePath);
+                return false;
+            }
+            
+            _logger.LogInformation("ShowInExplorerAsync: Successfully showed file in explorer: {FilePath}", filePath);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to show file in explorer: {FilePath}", filePath);
+            _logger.LogError(ex, "ShowInExplorerAsync: Failed to show file in explorer: {FilePath}", filePath);
             return false;
         }
     }
 
     public async Task<bool> OpenFolderAsync(string folderPath)
     {
-        if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath))
+        if (string.IsNullOrEmpty(folderPath))
         {
-            _logger.LogWarning("Folder not found: {FolderPath}", folderPath);
+            _logger.LogWarning("OpenFolderAsync: Folder path is null or empty");
+            return false;
+        }
+        
+        if (!Directory.Exists(folderPath))
+        {
+            _logger.LogWarning("OpenFolderAsync: Folder not found: {FolderPath}", folderPath);
             return false;
         }
 
         try
         {
+            _logger.LogInformation("OpenFolderAsync: Attempting to open folder: {FolderPath}", folderPath);
+            // まず explorer.exe にパスを渡す方式（もっとも安定）
             var startInfo = new ProcessStartInfo
             {
-                FileName = folderPath,
+                FileName = "explorer.exe",
+                Arguments = $"\"{folderPath}\"",
                 UseShellExecute = true,
-                Verb = "open"
+                CreateNoWindow = true
             };
 
+            _logger.LogDebug("OpenFolderAsync: Starting explorer with arguments: {Arguments}", startInfo.Arguments);
+
             using var process = Process.Start(startInfo);
-            
-            _logger.LogInformation("Opened folder: {FolderPath}", folderPath);
+
+            if (process == null)
+            {
+                _logger.LogWarning("OpenFolderAsync: explorer.exe returned null process for: {FolderPath}", folderPath);
+                // フォールバック: Shell にフォルダパスを直接渡す
+                var fallback = new ProcessStartInfo
+                {
+                    FileName = folderPath,
+                    UseShellExecute = true,
+                    Verb = "open"
+                };
+
+                using var fallbackProc = Process.Start(fallback);
+                if (fallbackProc == null)
+                {
+                    _logger.LogWarning("OpenFolderAsync: Fallback also failed for: {FolderPath}", folderPath);
+                    return false;
+                }
+            }
+
+            _logger.LogInformation("OpenFolderAsync: Successfully opened folder: {FolderPath}", folderPath);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to open folder: {FolderPath}", folderPath);
+            _logger.LogError(ex, "OpenFolderAsync: Failed to open folder: {FolderPath}", folderPath);
             return false;
         }
     }

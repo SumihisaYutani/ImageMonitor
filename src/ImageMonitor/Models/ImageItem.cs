@@ -1,6 +1,6 @@
 namespace ImageMonitor.Models;
 
-public class ImageItem
+public class ImageItem : IDisplayItem
 {
     [BsonId]
     public string Id { get; set; } = string.Empty;
@@ -71,8 +71,11 @@ public class ImageItem
         return $"{len:0.##} {sizes[order]}";
     }
     
-    public static string GenerateFileId(string filePath)
+    public static string GenerateFileId(string filePath, string? internalPath = null)
     {
-        return Path.GetFullPath(filePath).GetHashCode().ToString("x8");
+        var uniquePath = string.IsNullOrEmpty(internalPath) 
+            ? Path.GetFullPath(filePath) 
+            : $"{Path.GetFullPath(filePath)}#{internalPath}";
+        return uniquePath.GetHashCode().ToString("x8");
     }
 }

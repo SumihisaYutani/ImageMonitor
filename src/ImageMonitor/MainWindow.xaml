@@ -4,12 +4,17 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ImageMonitor"
+        xmlns:converters="clr-namespace:ImageMonitor.Converters"
         mc:Ignorable="d"
+        x:Name="RootWindow"
         Title="ImageMonitor" Height="800" Width="1200"
         MinHeight="600" MinWidth="800">
     
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+        
+        <!-- Thumbnail Size to Card Size Converter -->
+        <converters:ThumbnailSizeToCardSizeConverter x:Key="ThumbnailSizeToCardSizeConverter"/>
         <Style x:Key="CardStyle" TargetType="Border">
             <Setter Property="Background" Value="White"/>
             <Setter Property="CornerRadius" Value="4"/>
@@ -63,21 +68,34 @@
             <Button Content="Refresh" Command="{Binding RefreshCommand}" Style="{StaticResource IconButtonStyle}"/>
             <Separator/>
             
+            
+            
             <!-- Search Box -->
             <Label Content="Search:"/>
             <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}" 
-                     Width="200" Margin="4"/>
+                     Width="200" Margin="4" ToolTip="Search by filename or archive name"/>
             <Button Content="Clear" Click="ClearSearch_Click" Style="{StaticResource IconButtonStyle}"/>
             
             <Separator/>
             
-            <!-- Filters -->
-            <CheckBox Content="Include Archives" IsChecked="{Binding IncludeArchives}" Margin="8,0"/>
-            <Label Content="Image Ratio:"/>
-            <Slider Value="{Binding ImageRatioThreshold}" 
-                    Minimum="0" Maximum="1" Width="100" 
-                    TickFrequency="0.1" IsSnapToTickEnabled="True" Margin="4"/>
-            <TextBlock Text="{Binding ImageRatioThreshold, StringFormat=P0}" Width="30"/>
+            <!-- Sort Options -->
+            <Label Content="Sort by:"/>
+            <ComboBox SelectedValue="{Binding SortBy}" Width="120" Margin="4">
+                <ComboBoxItem Content="Name" Tag="FileName"/>
+                <ComboBoxItem Content="Size" Tag="FileSize"/>
+                <ComboBoxItem Content="Date Created" Tag="CreatedAt"/>
+                <ComboBoxItem Content="Date Modified" Tag="ModifiedAt"/>
+            </ComboBox>
+            <Button Content="↑↓" Command="{Binding ToggleSortDirectionCommand}" 
+                    Style="{StaticResource IconButtonStyle}" 
+                    ToolTip="Toggle sort direction"/>
+            
+            <Separator/>
+            
+            <!-- Properties Panel Toggle -->
+            <ToggleButton Content="📋 Properties" IsChecked="{Binding IsPropertiesPanelVisible, Mode=TwoWay}"
+                         Background="Transparent" BorderThickness="0" Padding="8" Margin="4" Cursor="Hand"
+                         ToolTip="プロパティパネルの表示/非表示を切り替え"/>
         </ToolBar>
 
         <!-- Main Content -->
@@ -89,8 +107,8 @@
 
             <!-- Image List -->
             <ListBox Grid.Column="0" 
-                     ItemsSource="{Binding ImageItems}"
-                     SelectedItem="{Binding SelectedImageItem}"
+                     ItemsSource="{Binding DisplayItems}"
+                     SelectedItem="{Binding SelectedDisplayItem}"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      VirtualizingStackPanel.IsVirtualizing="True"
                      VirtualizingStackPanel.VirtualizationMode="Recycling">
@@ -103,48 +121,61 @@
                 
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Border Style="{StaticResource CardStyle}" Width="150" Height="180">
+                        <Border Style="{StaticResource CardStyle}" 
+                                Width="{Binding DataContext.ThumbnailSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ThumbnailSizeToCardSizeConverter}, ConverterParameter='Width'}"
+                                Height="{Binding DataContext.ThumbnailSize, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ThumbnailSizeToCardSizeConverter}, ConverterParameter='Height'}">
                             <Grid>
                                 <Grid.RowDefinitions>
-                                    <RowDefinition Height="120"/>
-                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="{Binding DataContext.ThumbnailSize, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                    <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
                                 
                                 <!-- Thumbnail -->
                                 <Border Grid.Row="0" Background="LightGray" CornerRadius="2">
                                     <Image Source="{Binding ThumbnailPath}" 
                                            Stretch="Uniform" 
-                                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                                           RenderOptions.BitmapScalingMode="HighQuality"
+                                           RenderOptions.EdgeMode="Aliased"
+                                           UseLayoutRounding="True"
+                                           SnapsToDevicePixels="True"/>
                                 </Border>
                                 
                                 <!-- Information -->
-                                <StackPanel Grid.Row="1" Margin="0,4,0,0">
+                                <StackPanel Grid.Row="1" Margin="0,4,0,4" VerticalAlignment="Top">
                                     <TextBlock Text="{Binding DisplayName}" 
                                                FontWeight="Bold" 
                                                FontSize="11"
                                                TextTrimming="CharacterEllipsis"
                                                ToolTip="{Binding DisplayName}"
-                                               MaxHeight="32"
+                                               MaxHeight="28"
+                                               LineHeight="14"
                                                TextWrapping="Wrap"/>
                                     <TextBlock Text="{Binding Resolution}" 
                                                FontSize="10" 
                                                Foreground="Gray"
-                                               Margin="0,2,0,0"/>
+                                               Margin="0,2,0,1"/>
                                     <TextBlock Text="{Binding FormattedFileSize}" 
                                                FontSize="10" 
-                                               Foreground="Gray"/>
+                                               Foreground="Gray"
+                                               Margin="0,0,0,2"/>
+                                    
+                                    <!-- Folder button -->
+                                    <Button Content="📂 フォルダを開く" 
+                                           Width="120" Height="26" 
+                                           HorizontalAlignment="Center"
+                                           Margin="2,6,2,4"
+                                           Background="#2196F3"
+                                           Foreground="White"
+                                           BorderBrush="#1976D2"
+                                           BorderThickness="1"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           Cursor="Hand"
+                                           ToolTip="ファイルの場所をエクスプローラーで開く"
+                                           Command="{Binding DataContext.OpenFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                           CommandParameter="{Binding}"/>
                                 </StackPanel>
                             </Grid>
-                            
-                            <!-- Context Menu -->
-                            <Border.ContextMenu>
-                                <ContextMenu>
-                                    <MenuItem Header="Open Image" Command="{Binding DataContext.OpenImageCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
-                                    <MenuItem Header="Open Folder" Command="{Binding DataContext.OpenFolderCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
-                                    <Separator/>
-                                    <MenuItem Header="Properties" Click="Properties_Click"/>
-                                </ContextMenu>
-                            </Border.ContextMenu>
                             
                             <!-- Double-click handler -->
                             <Border.InputBindings>
@@ -152,16 +183,29 @@
                                               Command="{Binding DataContext.OpenImageCommand, RelativeSource={RelativeSource AncestorType=Window}}" 
                                               CommandParameter="{Binding}"/>
                             </Border.InputBindings>
+                            <!-- Context menu for card -->
+                            <Border.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="エクスプローラーで表示"
+                                              Command="{Binding DataContext.OpenFolderCommand, ElementName=RootWindow}"
+                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <MenuItem Header="関連付けアプリで開く"
+                                              Command="{Binding DataContext.OpenImageCommand, ElementName=RootWindow}"
+                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                </ContextMenu>
+                            </Border.ContextMenu>
                         </Border>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
 
             <!-- Properties Panel -->
-            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Left"/>
-            <Border Grid.Column="1" Width="250" Background="White" BorderBrush="LightGray" BorderThickness="1,0,0,0">
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Left"
+                         Visibility="{Binding IsPropertiesPanelVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+            <Border Grid.Column="1" Width="250" Background="White" BorderBrush="LightGray" BorderThickness="1,0,0,0"
+                    Visibility="{Binding IsPropertiesPanelVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer>
-                    <StackPanel Margin="8" DataContext="{Binding SelectedImageItem}">
+                    <StackPanel Margin="8" DataContext="{Binding SelectedDisplayItem}">
                         <TextBlock Text="Properties" FontWeight="Bold" FontSize="14" Margin="0,0,0,8"/>
                         
                         <Grid>
@@ -216,6 +260,17 @@
                             <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding ArchivePath}" TextWrapping="Wrap" Margin="8,2,0,2"
                                        Visibility="{Binding IsArchived, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                         </Grid>
+                        <!-- Actions for selected item -->
+                        <StackPanel Orientation="Vertical" Margin="0,12,0,0">
+                            <Button Content="📂 フォルダを開く"
+                                    Margin="0,0,0,4" Height="28"
+                                    Command="{Binding DataContext.OpenFolderCommand, ElementName=RootWindow}"
+                                    CommandParameter="{Binding}"/>
+                            <Button Content="🖼 開く"
+                                    Height="28"
+                                    Command="{Binding DataContext.OpenImageCommand, ElementName=RootWindow}"
+                                    CommandParameter="{Binding}"/>
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
             </Border>

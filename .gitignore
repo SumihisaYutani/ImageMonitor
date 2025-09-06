@@ -78,3 +78,14 @@ appsettings.*.json
 # System files to ignore
 nul
 NUL
+node_modules
+
+# Build outputs (ポータブル実行ファイル以外)
+build/net8.0-windows/
+build/standalone/
+
+# Data files (ログ、DB、サムネイル、設定は除外)
+**/Data/Logs/
+**/Data/*.db
+**/Data/Thumbnails/
+**/Data/settings.json

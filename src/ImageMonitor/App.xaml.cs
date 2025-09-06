@@ -11,13 +11,17 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        var appStartStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var stepTimes = new List<(string step, long ms)>();
+        
         // Initialize Serilog
-        var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var logDirectory = Path.Combine(appDataPath, "ImageMonitor", "Logs");
+        var executablePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+        var executableDir = Path.GetDirectoryName(executablePath) ?? Environment.CurrentDirectory;
+        var logDirectory = Path.Combine(executableDir, "Data", "Logs");
         Directory.CreateDirectory(logDirectory);
         
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
+            .MinimumLevel.Debug()
             .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
             .MinimumLevel.Override("System", Serilog.Events.LogEventLevel.Warning)
             .Enrich.FromLogContext()
@@ -28,28 +32,68 @@ public partial class App : Application
                 outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
             .WriteTo.Debug()
             .CreateLogger();
+        
+        stepTimes.Add(("Serilog initialization", appStartStopwatch.ElapsedMilliseconds));
 
         try
         {
+            // Global exception handling
+            AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
+            {
+                var ex = args.ExceptionObject as Exception;
+                Log.Fatal(ex, "Unhandled exception occurred. IsTerminating: {IsTerminating}", args.IsTerminating);
+            };
+
+            DispatcherUnhandledException += (sender, args) =>
+            {
+                Log.Fatal(args.Exception, "Unhandled UI exception occurred");
+                args.Handled = true; // Prevent application crash for UI exceptions
+            };
+
             Log.Information("Starting ImageMonitor application");
             
             _host = CreateHost();
+            stepTimes.Add(("Host creation", appStartStopwatch.ElapsedMilliseconds));
+            
             await _host.StartAsync();
             AppHost = _host;
+            stepTimes.Add(("Host startup", appStartStopwatch.ElapsedMilliseconds));
 
             // Initialize services
             var databaseService = _host.Services.GetRequiredService<IDatabaseService>();
             await databaseService.InitializeAsync();
+            stepTimes.Add(("Database initialization", appStartStopwatch.ElapsedMilliseconds));
 
             // Show main window
             var mainWindow = _host.Services.GetRequiredService<MainWindow>();
             mainWindow.Show();
+            stepTimes.Add(("Main window creation", appStartStopwatch.ElapsedMilliseconds));
+
+            appStartStopwatch.Stop();
+            var totalStartupTime = appStartStopwatch.ElapsedMilliseconds;
+            
+            // パフォーマンス詳細情報をログ出力
+            var stepDetails = string.Join(", ", stepTimes.Select((step, i) => 
+            {
+                var prevTime = i > 0 ? stepTimes[i-1].ms : 0;
+                var stepDuration = step.ms - prevTime;
+                return $"{step.step}: {stepDuration}ms";
+            }));
+            
+            Log.Information("Application startup completed in {TotalTime}ms - Steps: {StepDetails}", 
+                totalStartupTime, stepDetails);
+            
+            if (totalStartupTime > 5000) // 5秒以上は警告
+            {
+                Log.Warning("Slow application startup: {TotalTime}ms", totalStartupTime);
+            }
 
             base.OnStartup(e);
         }
         catch (Exception ex)
         {
-            Log.Fatal(ex, "Application failed to start");
+            appStartStopwatch.Stop();
+            Log.Fatal(ex, "Application failed to start after {ElapsedTime}ms", appStartStopwatch.ElapsedMilliseconds);
             MessageBox.Show($"Application failed to start: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             Current.Shutdown(1);
         }
@@ -93,11 +137,12 @@ public partial class App : Application
                 services.AddSingleton<IThumbnailService, ThumbnailService>();
                 services.AddSingleton<IImageScanService, ImageScanService>();
                 services.AddSingleton<ILauncherService, LauncherService>();
+                services.AddSingleton<IMessagingService, MessagingService>();
                 // services.AddSingleton<IArchiveService, ArchiveService>(); // Will be added later
                 
                 // ViewModels
                 services.AddSingleton<MainViewModel>();
-                services.AddTransient<SettingsViewModel>();
+                services.AddSingleton<SettingsViewModel>();
                 
                 // Views
                 services.AddSingleton<MainWindow>();

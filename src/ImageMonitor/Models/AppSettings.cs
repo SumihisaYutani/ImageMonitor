@@ -4,11 +4,9 @@ public class AppSettings
 {
     public List<string> ScanDirectories { get; set; } = new();
     
-    public int ThumbnailSize { get; set; } = 128;
+    public int ThumbnailSize { get; set; } = 192;
     
     public string? DefaultArchiveViewer { get; set; }
-    
-    public decimal ImageRatioThreshold { get; set; } = 0.5m;
     
     public AppTheme Theme { get; set; } = AppTheme.Light;
     

@@ -1,6 +1,7 @@
 using ImageMonitor.Models;
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Concurrent;
 
 namespace ImageMonitor.Services;
 
@@ -9,7 +10,9 @@ public class ThumbnailService : IThumbnailService
     private readonly ILogger<ThumbnailService> _logger;
     private readonly IConfigurationService _configService;
     private readonly string _thumbnailCacheDir;
-    private readonly SemaphoreSlim _operationLock = new(1, 1);
+    private readonly SemaphoreSlim _operationLock = new(4, 4); // 並行処理数を4に増加
+    private readonly ConcurrentDictionary<string, Task<string?>> _pendingThumbnails = new();
+    private readonly ConcurrentDictionary<string, DateTime> _thumbnailCache = new();
     private static readonly string[] SupportedImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".gif" };
     private static readonly string[] SupportedArchiveExtensions = { ".zip", ".rar" };
 
@@ -18,8 +21,10 @@ public class ThumbnailService : IThumbnailService
         _logger = logger;
         _configService = configService;
         
-        var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        _thumbnailCacheDir = Path.Combine(appDataPath, "ImageMonitor", "Thumbnails");
+        // 実行ファイルのディレクトリを取得
+        var executablePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+        var executableDir = Path.GetDirectoryName(executablePath) ?? Environment.CurrentDirectory;
+        _thumbnailCacheDir = Path.Combine(executableDir, "Data", "Thumbnails");
         
         if (!Directory.Exists(_thumbnailCacheDir))
         {
@@ -29,6 +34,9 @@ public class ThumbnailService : IThumbnailService
 
     public async Task<string?> GenerateThumbnailAsync(string imagePath, int size = 128)
     {
+        var thumbnailStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var stepTimes = new List<(string step, long ms)>();
+        
         if (string.IsNullOrEmpty(imagePath) || !File.Exists(imagePath))
         {
             _logger.LogWarning("Image file not found: {ImagePath}", imagePath);
@@ -36,8 +44,29 @@ public class ThumbnailService : IThumbnailService
         }
 
         var thumbnailPath = GetThumbnailPath(imagePath, size);
+        var cacheKey = $"{imagePath}:{size}";
+        stepTimes.Add(("Path and cache key generation", thumbnailStopwatch.ElapsedMilliseconds));
         
-        // サムネイルが既に存在し、元ファイルより新しい場合はそれを返す
+        // メモリキャッシュから存在確認
+        if (_thumbnailCache.TryGetValue(cacheKey, out var cachedTime))
+        {
+            var imageTime = File.GetLastWriteTime(imagePath);
+            if (cachedTime >= imageTime && File.Exists(thumbnailPath))
+            {
+                thumbnailStopwatch.Stop();
+                _logger.LogDebug("Using cached thumbnail: {ThumbnailPath} in {TotalTime}ms", 
+                    thumbnailPath, thumbnailStopwatch.ElapsedMilliseconds);
+                return thumbnailPath;
+            }
+            else
+            {
+                // キャッシュが古い場合は削除
+                _thumbnailCache.TryRemove(cacheKey, out _);
+            }
+        }
+        stepTimes.Add(("Memory cache check", thumbnailStopwatch.ElapsedMilliseconds));
+        
+        // ファイルレベルでの存在確認
         if (File.Exists(thumbnailPath))
         {
             var thumbnailTime = File.GetLastWriteTime(thumbnailPath);
@@ -45,21 +74,109 @@ public class ThumbnailService : IThumbnailService
             
             if (thumbnailTime >= imageTime)
             {
-                _logger.LogDebug("Using existing thumbnail: {ThumbnailPath}", thumbnailPath);
+                _thumbnailCache.TryAdd(cacheKey, thumbnailTime);
+                thumbnailStopwatch.Stop();
+                _logger.LogDebug("Using existing thumbnail: {ThumbnailPath} in {TotalTime}ms", 
+                    thumbnailPath, thumbnailStopwatch.ElapsedMilliseconds);
                 return thumbnailPath;
             }
         }
+        stepTimes.Add(("File cache check", thumbnailStopwatch.ElapsedMilliseconds));
 
+        // 重複生成を防ぐ
+        if (_pendingThumbnails.TryGetValue(cacheKey, out var pendingTask))
+        {
+            _logger.LogDebug("Waiting for pending thumbnail generation: {ImagePath}", imagePath);
+            var result = await pendingTask;
+            thumbnailStopwatch.Stop();
+            _logger.LogDebug("Received pending thumbnail: {ImagePath} in {TotalTime}ms", 
+                imagePath, thumbnailStopwatch.ElapsedMilliseconds);
+            return result;
+        }
+
+        // 新しいサムネイル生成タスクを作成
+        var thumbnailTask = GenerateThumbnailWithSemaphoreAsync(imagePath, thumbnailPath, size, cacheKey, stepTimes, thumbnailStopwatch);
+        
+        if (_pendingThumbnails.TryAdd(cacheKey, thumbnailTask))
+        {
+            try
+            {
+                return await thumbnailTask;
+            }
+            finally
+            {
+                _pendingThumbnails.TryRemove(cacheKey, out _);
+            }
+        }
+        else
+        {
+            // 他のスレッドが既に開始している場合は待機
+            if (_pendingThumbnails.TryGetValue(cacheKey, out var existingTask))
+            {
+                var result = await existingTask;
+                thumbnailStopwatch.Stop();
+                _logger.LogDebug("Received concurrent thumbnail: {ImagePath} in {TotalTime}ms", 
+                    imagePath, thumbnailStopwatch.ElapsedMilliseconds);
+                return result;
+            }
+            return await thumbnailTask;
+        }
+    }
+
+    private async Task<string?> GenerateThumbnailWithSemaphoreAsync(string imagePath, string thumbnailPath, int size, string cacheKey, List<(string step, long ms)> stepTimes, System.Diagnostics.Stopwatch thumbnailStopwatch)
+    {
         await _operationLock.WaitAsync();
+        stepTimes.Add(("Semaphore acquired", thumbnailStopwatch.ElapsedMilliseconds));
+        
         try
         {
-            // 再度チェック（並行処理対策）
+            // セマフォ取得後に再度チェック（並行処理対策）
             if (File.Exists(thumbnailPath) && File.GetLastWriteTime(thumbnailPath) >= File.GetLastWriteTime(imagePath))
             {
+                var thumbnailTime = File.GetLastWriteTime(thumbnailPath);
+                _thumbnailCache.TryAdd(cacheKey, thumbnailTime);
+                thumbnailStopwatch.Stop();
+                _logger.LogDebug("Using existing thumbnail after semaphore: {ThumbnailPath} in {TotalTime}ms", 
+                    thumbnailPath, thumbnailStopwatch.ElapsedMilliseconds);
                 return thumbnailPath;
             }
 
-            return await GenerateThumbnailInternalAsync(imagePath, thumbnailPath, size);
+            var result = await GenerateThumbnailInternalAsync(imagePath, thumbnailPath, size);
+            stepTimes.Add(("Thumbnail generation", thumbnailStopwatch.ElapsedMilliseconds));
+            
+            if (result != null)
+            {
+                _thumbnailCache.TryAdd(cacheKey, DateTime.Now);
+            }
+            
+            thumbnailStopwatch.Stop();
+            var totalTime = thumbnailStopwatch.ElapsedMilliseconds;
+            
+            // パフォーマンス詳細情報をログ出力
+            if (totalTime > 1000) // 1秒以上の場合は詳細ログ
+            {
+                var stepDetails = string.Join(", ", stepTimes.Select((step, i) => 
+                {
+                    var prevTime = i > 0 ? stepTimes[i-1].ms : 0;
+                    var stepDuration = step.ms - prevTime;
+                    return $"{step.step}: {stepDuration}ms";
+                }));
+                
+                _logger.LogWarning("Slow thumbnail generation: {ImagePath} in {TotalTime}ms - Steps: {StepDetails}", 
+                    imagePath, totalTime, stepDetails);
+            }
+            else if (totalTime > 200) // 200ms以上は軽いログ
+            {
+                _logger.LogInformation("Generated thumbnail: {ImagePath} in {TotalTime}ms", 
+                    imagePath, totalTime);
+            }
+            else
+            {
+                _logger.LogDebug("Generated thumbnail: {ImagePath} in {TotalTime}ms", 
+                    imagePath, totalTime);
+            }
+            
+            return result;
         }
         finally
         {
@@ -83,8 +200,24 @@ public class ThumbnailService : IThumbnailService
         }
 
         var thumbnailPath = GetThumbnailPath(archivePath, size);
+        var cacheKey = $"{archivePath}:{size}:archive";
         
-        // サムネイルが既に存在し、元ファイルより新しい場合はそれを返す
+        // メモリキャッシュから存在確認
+        if (_thumbnailCache.TryGetValue(cacheKey, out var cachedTime))
+        {
+            var archiveTime = File.GetLastWriteTime(archivePath);
+            if (cachedTime >= archiveTime && File.Exists(thumbnailPath))
+            {
+                _logger.LogDebug("Using cached archive thumbnail: {ThumbnailPath}", thumbnailPath);
+                return thumbnailPath;
+            }
+            else
+            {
+                _thumbnailCache.TryRemove(cacheKey, out _);
+            }
+        }
+        
+        // ファイルレベルでの存在確認
         if (File.Exists(thumbnailPath))
         {
             var thumbnailTime = File.GetLastWriteTime(thumbnailPath);
@@ -92,21 +225,63 @@ public class ThumbnailService : IThumbnailService
             
             if (thumbnailTime >= archiveTime)
             {
+                _thumbnailCache.TryAdd(cacheKey, thumbnailTime);
                 _logger.LogDebug("Using existing archive thumbnail: {ThumbnailPath}", thumbnailPath);
                 return thumbnailPath;
             }
         }
 
+        // 重複生成を防ぐ
+        if (_pendingThumbnails.TryGetValue(cacheKey, out var pendingTask))
+        {
+            _logger.LogDebug("Waiting for pending archive thumbnail generation: {ArchivePath}", archivePath);
+            return await pendingTask;
+        }
+
+        // 新しいアーカイブサムネイル生成タスクを作成
+        var thumbnailTask = GenerateArchiveThumbnailWithSemaphoreAsync(archivePath, thumbnailPath, size, cacheKey);
+        
+        if (_pendingThumbnails.TryAdd(cacheKey, thumbnailTask))
+        {
+            try
+            {
+                return await thumbnailTask;
+            }
+            finally
+            {
+                _pendingThumbnails.TryRemove(cacheKey, out _);
+            }
+        }
+        else
+        {
+            // 他のスレッドが既に開始している場合は待機
+            if (_pendingThumbnails.TryGetValue(cacheKey, out var existingTask))
+            {
+                return await existingTask;
+            }
+            return await thumbnailTask;
+        }
+    }
+
+    private async Task<string?> GenerateArchiveThumbnailWithSemaphoreAsync(string archivePath, string thumbnailPath, int size, string cacheKey)
+    {
         await _operationLock.WaitAsync();
         try
         {
-            // 再度チェック（並行処理対策）
+            // セマフォ取得後に再度チェック（並行処理対策）
             if (File.Exists(thumbnailPath) && File.GetLastWriteTime(thumbnailPath) >= File.GetLastWriteTime(archivePath))
             {
+                var thumbnailTime = File.GetLastWriteTime(thumbnailPath);
+                _thumbnailCache.TryAdd(cacheKey, thumbnailTime);
                 return thumbnailPath;
             }
 
-            return await GenerateArchiveThumbnailInternalAsync(archivePath, thumbnailPath, size);
+            var result = await GenerateArchiveThumbnailInternalAsync(archivePath, thumbnailPath, size);
+            if (result != null)
+            {
+                _thumbnailCache.TryAdd(cacheKey, DateTime.Now);
+            }
+            return result;
         }
         finally
         {
@@ -238,33 +413,90 @@ public class ThumbnailService : IThumbnailService
 
             return await Task.Run(() =>
             {
-                // WPF BitmapImageを使用
-                var decoder = BitmapDecoder.Create(imageStream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                var originalFrame = decoder.Frames[0];
-                
-                // アスペクト比を維持してサイズ計算
-                int originalWidth = originalFrame.PixelWidth;
-                int originalHeight = originalFrame.PixelHeight;
-                
-                double scale = Math.Min((double)size / originalWidth, (double)size / originalHeight);
-                int width = (int)(originalWidth * scale);
-                int height = (int)(originalHeight * scale);
+                try
+                {
+                    // ストリームの基本検証
+                    if (imageStream == null || !imageStream.CanRead)
+                    {
+                        _logger.LogWarning("Invalid stream for thumbnail generation");
+                        return null;
+                    }
 
-                // サムネイル生成
-                var thumbnail = new TransformedBitmap(originalFrame, new ScaleTransform(scale, scale));
+                    // 安全な画像デコード処理
+                    BitmapDecoder decoder;
+                    BitmapFrame originalFrame;
+                    
+                    try
+                    {
+                        decoder = BitmapDecoder.Create(
+                            imageStream, 
+                            BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.IgnoreColorProfile, 
+                            BitmapCacheOption.OnLoad);
+                        
+                        if (decoder.Frames.Count == 0)
+                        {
+                            _logger.LogWarning("No frames found in image for thumbnail generation");
+                            return null;
+                        }
+                        
+                        originalFrame = decoder.Frames[0];
+                    }
+                    catch (OverflowException ex)
+                    {
+                        _logger.LogWarning(ex, "Image data overflow during decoding - skipping thumbnail generation");
+                        return null;
+                    }
+                    catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == unchecked((int)0x88982F05))
+                    {
+                        _logger.LogWarning(ex, "Image data out of range - skipping thumbnail generation");
+                        return null;
+                    }
+                    
+                    // 基本的な画像サイズ検証
+                    var originalWidth = originalFrame.PixelWidth;
+                    var originalHeight = originalFrame.PixelHeight;
+                    
+                    if (originalWidth <= 0 || originalHeight <= 0)
+                    {
+                        _logger.LogWarning("Invalid image dimensions: {Width}x{Height}", originalWidth, originalHeight);
+                        return null;
+                    }
                 
-                // JPEGエンコーダーで保存
-                var encoder = new JpegBitmapEncoder();
-                encoder.QualityLevel = 85;
-                encoder.Frames.Add(BitmapFrame.Create(thumbnail));
-                
-                using var fileStream = new FileStream(thumbnailPath, FileMode.Create);
-                encoder.Save(fileStream);
+                    // アスペクト比を維持してサイズ計算
+                    // 高品質のためベースサイズを大きく取る（最大512px、要求サイズの2倍以上を保証）
+                    int baseSize = Math.Max(512, size * 2);
+                    
+                    double scale = Math.Min((double)baseSize / originalWidth, (double)baseSize / originalHeight);
+                    int width = (int)(originalWidth * scale);
+                    int height = (int)(originalHeight * scale);
 
-                _logger.LogDebug("Generated thumbnail: {ThumbnailPath} ({Width}x{Height})", 
-                    thumbnailPath, width, height);
-                
-                return thumbnailPath;
+                    // 高品質サムネイル生成
+                    var scaleTransform = new ScaleTransform(scale, scale);
+                    scaleTransform.Freeze(); // パフォーマンス向上のためフリーズ
+                    var thumbnail = new TransformedBitmap(originalFrame, scaleTransform);
+                    
+                    // 高品質レンダリング設定
+                    RenderOptions.SetBitmapScalingMode(thumbnail, BitmapScalingMode.HighQuality);
+                    RenderOptions.SetEdgeMode(thumbnail, EdgeMode.Aliased);
+                    
+                    // 高品質JPEGエンコーダーで保存
+                    var encoder = new JpegBitmapEncoder();
+                    encoder.QualityLevel = 95;
+                    encoder.Frames.Add(BitmapFrame.Create(thumbnail));
+                    
+                    using var fileStream = new FileStream(thumbnailPath, FileMode.Create);
+                    encoder.Save(fileStream);
+
+                    _logger.LogDebug("Generated high-quality thumbnail: {ThumbnailPath} ({Width}x{Height}) from base size {BaseSize} for requested size {RequestedSize}", 
+                        thumbnailPath, width, height, baseSize, size);
+                    
+                    return thumbnailPath;
+                }
+                catch (Exception innerEx)
+                {
+                    _logger.LogWarning(innerEx, "Failed to process thumbnail generation - skipping");
+                    return null;
+                }
             });
         }
         catch (Exception ex)

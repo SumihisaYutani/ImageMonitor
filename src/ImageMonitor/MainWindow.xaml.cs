@@ -1,5 +1,6 @@
 using ImageMonitor.ViewModels;
 using ImageMonitor.Services;
+using ImageMonitor.Models;
 
 namespace ImageMonitor;
 
@@ -156,17 +157,22 @@ public partial class MainWindow : Window
     {
         if (ViewModel.SelectedImageItem != null)
         {
+            var item = ViewModel.SelectedImageItem;
+            var resolution = item is ImageItem imgItem ? imgItem.Resolution : 
+                           item is ArchiveItem archItem ? $"{archItem.ImageFiles} images" : "Unknown";
+            
             // TODO: Implement detailed properties dialog
             MessageBox.Show(
-                $"Name: {ViewModel.SelectedImageItem.FileName}\n" +
-                $"Size: {ViewModel.SelectedImageItem.FormattedFileSize}\n" +
-                $"Resolution: {ViewModel.SelectedImageItem.Resolution}\n" +
-                $"Path: {ViewModel.SelectedImageItem.FilePath}",
-                "Image Properties",
+                $"Name: {item.FileName}\n" +
+                $"Size: {item.FormattedFileSize}\n" +
+                $"Resolution: {resolution}\n" +
+                $"Path: {item.FilePath}",
+                "Properties",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
     }
+
 
     #endregion
 }

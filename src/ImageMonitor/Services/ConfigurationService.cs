@@ -15,8 +15,10 @@ public class ConfigurationService : IConfigurationService
     {
         _logger = logger;
         
-        var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var appDataDir = Path.Combine(appDataPath, "ImageMonitor");
+        // 実行ファイルのディレクトリを取得
+        var executablePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+        var executableDir = Path.GetDirectoryName(executablePath) ?? Environment.CurrentDirectory;
+        var appDataDir = Path.Combine(executableDir, "Data");
         
         if (!Directory.Exists(appDataDir))
         {
@@ -27,12 +29,12 @@ public class ConfigurationService : IConfigurationService
         _logger.LogDebug("Settings file path: {SettingsFilePath}", _settingsFilePath);
     }
 
-    public async Task<AppSettings> GetSettingsAsync()
+    public async Task<AppSettings> GetSettingsAsync(bool forceReload = false)
     {
         await _settingsLock.WaitAsync();
         try
         {
-            if (_cachedSettings != null)
+            if (!forceReload && _cachedSettings != null)
             {
                 return _cachedSettings;
             }
@@ -42,7 +44,11 @@ public class ConfigurationService : IConfigurationService
                 try
                 {
                     var json = await File.ReadAllTextAsync(_settingsFilePath);
-                    _cachedSettings = System.Text.Json.JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+                    var options = new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                    };
+                    _cachedSettings = System.Text.Json.JsonSerializer.Deserialize<AppSettings>(json, options) ?? new AppSettings();
                     _logger.LogDebug("Settings loaded from file");
                 }
                 catch (Exception ex)
