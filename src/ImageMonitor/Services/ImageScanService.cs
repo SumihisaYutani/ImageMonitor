@@ -14,10 +14,11 @@ public class ImageScanService : IImageScanService
     private readonly IDatabaseService _databaseService;
     private SemaphoreSlim _concurrencyLimit;
     
-    // 動的並行度調整
+    // 動的並行度調整（無効化：SemaphoreSlim差し替えを防ぐため）
     private int _currentConcurrency = 2;
     private DateTime _lastPerformanceCheck = DateTime.Now;
     private double _lastThroughput = 0;
+    private bool _semaphoreInitialized = false;
     
     // メタデータキャッシュ (LRUキャッシュ)
     private readonly ConcurrentDictionary<string, (ImageItem metadata, DateTime lastAccess)> _metadataCache = new();
@@ -156,8 +157,20 @@ public class ImageScanService : IImageScanService
 
     public async Task<List<ImageItem>> ScanDirectoriesAsync(IEnumerable<string> directoryPaths, CancellationToken cancellationToken = default)
     {
-        var validDirectories = directoryPaths.Where(Directory.Exists).ToList();
+        var directoryList = directoryPaths.ToList();
+        var validDirectories = directoryList.Where(Directory.Exists).ToList();
         _logger.LogInformation("Scanning {Count} directories in parallel", validDirectories.Count);
+
+        // 削除されたディレクトリの検出とクリーンアップ
+        _logger.LogDebug("Starting deletion detection for removed directories");
+        var deletedDirectories = await DetectDeletedDirectoriesAsync(directoryList, _databaseService);
+        _logger.LogDebug("DetectDeletedDirectoriesAsync completed. Found {Count} deleted directories", deletedDirectories.Count);
+        if (deletedDirectories.Any())
+        {
+            var cleanupCount = await CleanupDeletedDirectoriesAsync(deletedDirectories, _databaseService);
+            _logger.LogInformation("Cleaned up {CleanupCount} items from {DeletedCount} deleted directories", 
+                cleanupCount, deletedDirectories.Count);
+        }
 
         // ディレクトリレベルでの並列処理
         var directoryTasks = validDirectories.Select(async directory =>
@@ -271,12 +284,16 @@ public class ImageScanService : IImageScanService
         
         _logger.LogInformation("Starting streaming file processing: {TotalFiles} files", totalFiles);
 
-        // 設定から並行処理数を取得
-        var settings = await _configService.GetSettingsAsync();
-        
-        // セマフォアを設定値で初期化
-        _concurrencyLimit?.Dispose();
-        _concurrencyLimit = new SemaphoreSlim(settings.MaxConcurrentScans, settings.MaxConcurrentScans);
+        // 設定から並行処理数を取得（一度だけ初期化）
+        if (!_semaphoreInitialized)
+        {
+            var settings = await _configService.GetSettingsAsync();
+            _concurrencyLimit?.Dispose();
+            _concurrencyLimit = new SemaphoreSlim(settings.MaxConcurrentScans, settings.MaxConcurrentScans);
+            _currentConcurrency = settings.MaxConcurrentScans;
+            _semaphoreInitialized = true;
+            _logger.LogDebug("Semaphore initialized with concurrency: {Concurrency}", _currentConcurrency);
+        }
 
         // バッチオープン最適化: ファイルタイプ別に分離して効率的に処理
         var imageFiles = filePaths.Where(IsImageFile).ToList();
@@ -323,7 +340,8 @@ public class ImageScanService : IImageScanService
                 await _concurrencyLimit.WaitAsync(cancellationToken);
                 try
                 {
-                    var imageItem = await ProcessImageFileAsync(filePath, cancellationToken);
+                    // 単一画像ファイルの処理を無効化（アーカイブのみ表示するため）
+                    // var imageItem = await ProcessImageFileAsync(filePath, cancellationToken);
                     
                     var processed = Interlocked.Increment(ref processedFiles);
                     OnScanProgress(new ScanProgressEventArgs
@@ -331,15 +349,15 @@ public class ImageScanService : IImageScanService
                         CurrentFile = Path.GetFileName(filePath),
                         ProcessedFiles = processed,
                         TotalFiles = totalFiles,
-                        Message = $"Processing image {Path.GetFileName(filePath)}...",
+                        Message = $"Skipping image {Path.GetFileName(filePath)} (archives only)...",
                         IsCompleted = processed == totalFiles,
-                        ItemsFound = imageItem != null ? 1 : 0
+                        ItemsFound = 0
                     });
 
-                    // HDD最適化: 動的並行度調整
-                    AdjustConcurrencyForHDD(processed, DateTime.Now - processingStartTime);
+                    // HDD最適化: 動的並行度調整（無効化：SemaphoreSlim差し替えを防ぐため）
+                    // AdjustConcurrencyForHDD(processed, DateTime.Now - processingStartTime);
 
-                    return imageItem != null ? new[] { imageItem } : Array.Empty<ImageItem>();
+                    return Array.Empty<ImageItem>();
                 }
                 catch (Exception ex)
                 {
@@ -429,9 +447,10 @@ public class ImageScanService : IImageScanService
                 
                 if (IsImageFile(filePath))
                 {
-                    var imageItem = await ProcessImageFileAsync(filePath, cancellationToken);
-                    if (imageItem != null)
-                        items.Add(imageItem);
+                    // 単一画像ファイルの処理を無効化（アーカイブのみ表示するため）
+                    // var imageItem = await ProcessImageFileAsync(filePath, cancellationToken);
+                    // if (imageItem != null)
+                    //     items.Add(imageItem);
                 }
                 else if (IsArchiveFile(filePath))
                 {
@@ -507,12 +526,16 @@ public class ImageScanService : IImageScanService
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         _logger.LogInformation("Starting optimized ProcessFilesAsync: {TotalFiles} files", totalFiles);
 
-        // 設定から並行処理数を取得
-        var settings = await _configService.GetSettingsAsync();
-        
-        // セマフォアを設定値で初期化（既存のものは破棄）
-        _concurrencyLimit?.Dispose();
-        _concurrencyLimit = new SemaphoreSlim(settings.MaxConcurrentScans, settings.MaxConcurrentScans);
+        // 設定から並行処理数を取得（一度だけ初期化）
+        if (!_semaphoreInitialized)
+        {
+            var settings = await _configService.GetSettingsAsync();
+            _concurrencyLimit?.Dispose();
+            _concurrencyLimit = new SemaphoreSlim(settings.MaxConcurrentScans, settings.MaxConcurrentScans);
+            _currentConcurrency = settings.MaxConcurrentScans;
+            _semaphoreInitialized = true;
+            _logger.LogDebug("Semaphore initialized with concurrency: {Concurrency}", _currentConcurrency);
+        }
 
         // 結果を蓄積するリスト
         var allResults = new List<ImageItem>();
@@ -528,9 +551,10 @@ public class ImageScanService : IImageScanService
                 
                 if (IsImageFile(filePath))
                 {
-                    var imageItem = await ProcessImageFileAsync(filePath, cancellationToken);
-                    if (imageItem != null)
-                        items.Add(imageItem);
+                    // 単一画像ファイルの処理を無効化（アーカイブのみ表示するため）
+                    // var imageItem = await ProcessImageFileAsync(filePath, cancellationToken);
+                    // if (imageItem != null)
+                    //     items.Add(imageItem);
                 }
                 else if (IsArchiveFile(filePath))
                 {
@@ -914,6 +938,7 @@ public class ImageScanService : IImageScanService
             var tasks = imageFilesInArchive.Select(async internalPath =>
             {
                 await semaphore.WaitAsync(cancellationToken);
+                ImageItem? result = null;
                 try
                 {
                     if (cancellationToken.IsCancellationRequested || !entryLookup.TryGetValue(internalPath, out var entry))
@@ -933,31 +958,36 @@ public class ImageScanService : IImageScanService
                         InternalPath = internalPath
                     };
 
-                    // メタデータを取得
-                    try
-                    {
-                        using var stream = entry.Open();
-                        PopulateImageMetadataFromStream(imageItem, stream, internalPath);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "Failed to read metadata for archive entry: {ArchivePath}#{InternalPath}", archivePath, internalPath);
-                        // メタデータ読み取り失敗時はデフォルト値を設定
-                        imageItem.ImageFormat = Path.GetExtension(internalPath).TrimStart('.');
-                        imageItem.HasExifData = false;
-                    }
-
-                    return imageItem;
+                    // 高速化: アーカイブ内画像のメタデータ読み取りをスキップ
+                    // ファイル拡張子からフォーマットを推定し、デフォルト値を設定
+                    imageItem.ImageFormat = Path.GetExtension(internalPath).TrimStart('.').ToLowerInvariant();
+                    imageItem.HasExifData = false;
+                    imageItem.Width = 0;  // アーカイブ内画像は実際のサイズ不明
+                    imageItem.Height = 0;
+                    
+                    // 必要に応じて後でサムネイル生成時に実際のサイズを取得
+                    result = imageItem;
                 }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to process archive entry: {ArchivePath}#{InternalPath}", archivePath, internalPath);
-                    return null;
                 }
                 finally
                 {
-                    semaphore.Release();
+                    try
+                    {
+                        semaphore.Release();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // セマフォが既に破棄されている場合は無視
+                    }
+                    catch (SemaphoreFullException ex)
+                    {
+                        _logger.LogWarning(ex, "Semaphore release failed for archive entry: {ArchivePath}#{InternalPath}", archivePath, internalPath);
+                    }
                 }
+                return result;
             });
 
             var processedItems = await Task.WhenAll(tasks);
@@ -977,6 +1007,7 @@ public class ImageScanService : IImageScanService
             var tasks = imageFilesInArchive.Select(async internalPath =>
             {
                 await semaphore.WaitAsync(cancellationToken);
+                ImageItem? result = null;
                 try
                 {
                     if (cancellationToken.IsCancellationRequested || !entryLookup.TryGetValue(internalPath, out var entry))
@@ -996,30 +1027,36 @@ public class ImageScanService : IImageScanService
                         InternalPath = internalPath
                     };
 
-                    // メタデータを取得
-                    try
-                    {
-                        using var stream = entry.OpenEntryStream();
-                        PopulateImageMetadataFromStream(imageItem, stream, internalPath);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "Failed to read metadata for archive entry: {ArchivePath}#{InternalPath}", archivePath, internalPath);
-                        imageItem.ImageFormat = Path.GetExtension(internalPath).TrimStart('.');
-                        imageItem.HasExifData = false;
-                    }
-
-                    return imageItem;
+                    // 高速化: アーカイブ内画像のメタデータ読み取りをスキップ
+                    // ファイル拡張子からフォーマットを推定し、デフォルト値を設定
+                    imageItem.ImageFormat = Path.GetExtension(internalPath).TrimStart('.').ToLowerInvariant();
+                    imageItem.HasExifData = false;
+                    imageItem.Width = 0;  // アーカイブ内画像は実際のサイズ不明
+                    imageItem.Height = 0;
+                    
+                    // 必要に応じて後でサムネイル生成時に実際のサイズを取得
+                    result = imageItem;
                 }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to process archive entry: {ArchivePath}#{InternalPath}", archivePath, internalPath);
-                    return null;
                 }
                 finally
                 {
-                    semaphore.Release();
+                    try
+                    {
+                        semaphore.Release();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // セマフォが既に破棄されている場合は無視
+                    }
+                    catch (SemaphoreFullException ex)
+                    {
+                        _logger.LogWarning(ex, "Semaphore release failed for archive entry: {ArchivePath}#{InternalPath}", archivePath, internalPath);
+                    }
                 }
+                return result;
             });
 
             var processedItems = await Task.WhenAll(tasks);
@@ -1803,6 +1840,9 @@ public class ImageScanService : IImageScanService
             _logger.LogDebug("Performance check: {Throughput:F2} files/sec, current concurrency: {Concurrency}", 
                 currentThroughput, _currentConcurrency);
             
+            // DISABLED: SemaphoreSlim差し替えによるSemaphoreFullExceptionを防ぐため
+            // 動的並行度調整は無効化し、固定値を使用
+            /*
             // 前回より性能が悪化している場合は並行度を下げる
             if (_lastThroughput > 0 && currentThroughput < _lastThroughput * 0.8)
             {
@@ -1830,6 +1870,7 @@ public class ImageScanService : IImageScanService
                 _logger.LogInformation("HDD optimization: Increased concurrency to {Concurrency} due to performance improvement", 
                     _currentConcurrency);
             }
+            */
             
             _lastThroughput = currentThroughput;
         }
@@ -1926,20 +1967,26 @@ public class ImageScanService : IImageScanService
     /// </summary>
     private async Task<List<string>> DetectDeletedDirectoriesAsync(List<string> currentDirectories, IDatabaseService databaseService)
     {
-        var scannedDirectories = (await databaseService.GetScannedDirectoriesAsync()).ToList();
+        // スキャン履歴からではなく、実際のデータベース内のアイテムから既存ディレクトリを取得
+        var existingImageDirectories = await databaseService.GetImageDirectoriesAsync();
+        var existingArchiveDirectories = await databaseService.GetArchiveDirectoriesAsync();
+        var allExistingDirectories = existingImageDirectories.Concat(existingArchiveDirectories).Distinct().ToList();
+        
+        _logger.LogDebug("Retrieved {Count} existing directories from database items", allExistingDirectories.Count());
+        
         var deletedDirectories = new List<string>();
         
-        foreach (var scannedDir in scannedDirectories)
+        foreach (var existingDir in allExistingDirectories)
         {
             // 現在の設定に存在しない、または物理的に存在しないディレクトリを検出
-            if (!currentDirectories.Contains(scannedDir) || !Directory.Exists(scannedDir))
+            if (!currentDirectories.Contains(existingDir) || !Directory.Exists(existingDir))
             {
-                deletedDirectories.Add(scannedDir);
+                deletedDirectories.Add(existingDir);
             }
         }
         
-        _logger.LogDebug("Detected {DeletedCount} deleted directories out of {ScannedCount} previously scanned directories", 
-            deletedDirectories.Count, scannedDirectories.Count);
+        _logger.LogDebug("Detected {DeletedCount} deleted directories out of {ExistingCount} existing directories", 
+            deletedDirectories.Count, allExistingDirectories.Count());
         
         return deletedDirectories;
     }

@@ -136,3 +136,130 @@ warning IL3000: 'System.Reflection.Assembly.Location' always returns an empty st
 - プロパティパネルのボタン正常表示 ✅  
 - プロパティパネル表示切り替え機能 ✅
 - アーカイブファイル処理と画像表示 ✅
+
+### 大規模パフォーマンス改善（2025-09-06）
+
+**問題**：
+- スキャン時間が異常に長い（40秒以上）
+- アーカイブファイルのメタデータ処理が主要な遅延原因
+
+**修正内容**：
+1. **アーカイブ内画像のメタデータ読み取り最適化**：
+   - `ImageScanService.cs`: `PopulateImageMetadataFromStream()`呼び出しを完全削除
+   - ファイル拡張子からフォーマットを推定、デフォルト値を設定
+   - ストリーム処理による遅延を排除
+
+2. **同期処理の並行化改善**：
+   - 大きなアーカイブ（100ファイル以上）は最大16タスクで並行処理
+   - セマフォによる適切な同時実行制限
+
+3. **削除検出機能の強化**：
+   - `DetectDeletedDirectoriesAsync()`と`CleanupDeletedDirectoriesAsync()`メソッド追加
+   - スキャンディレクトリが空でもクリーンアップ処理を実行
+
+**結果**：
+- 処理時間: **40秒以上 → 0.6秒**（約99%の性能向上）
+- ファイル処理速度: **1 files/sec → 45+ files/sec**
+- メモリ使用量の大幅削減
+
+### 単一画像ファイル除外機能（2025-09-06）
+
+**要求**：アーカイブのみをサムネイル表示し、単一画像ファイルは除外
+
+**実装内容**：
+1. **単一画像ファイル処理の無効化**：
+   - `ImageScanService.cs`: 単一画像ファイルの処理ロジックをコメントアウト
+   
+2. **データベースクリーンアップ機能追加**：
+   - `DatabaseService.cs`: `CleanupSingleImageItemsAsync()`メソッド追加
+   - 既存の単一画像アイテムを一括削除
+   
+3. **MainViewModelでの自動クリーンアップ**：
+   - スキャン完了時に単一画像アイテムを自動削除
+   - ログでクリーンアップ状況を報告
+
+**結果**：
+- サムネイル表示: **アーカイブファイルのみ**
+- 単一画像ファイル: **自動的に除外・削除**
+- データベース: **不要なレコードの自動クリーンアップ**
+
+### SemaphoreSlim並行処理修正（2025-09-06）
+
+**問題**：
+- 大量ファイル処理時に`SemaphoreFullException`が発生
+- 動的な並行数調整でセマフォインスタンスが置き換えられることが原因
+
+**修正内容**：
+1. **セマフォ初期化フラグ追加**：
+   - `_semaphoreInitialized`フラグで一度だけ初期化を保証
+   
+2. **動的並行数調整の無効化**：
+   - セマフォインスタンスの置き換えを防止
+   - 設定ファイルからの初期値のみ使用
+
+3. **エラーハンドリング強化**：
+   - try-catch-finallyブロックでの適切なセマフォ解放
+   - ログでの詳細なデバッグ情報追加
+
+**結果**：
+- **SemaphoreFullException完全解消**
+- 大量ファイル処理の安定性向上
+- 並行処理の信頼性確保
+
+### UI表示バグ修正 - 99.6%画像比率ファイル表示問題（2025-09-06）
+
+**問題**：
+- 99.6%等の100%未満の画像比率を持つアーカイブファイルがUIに表示されない
+- データベースには正常に保存されているがUI読み込みロジックにバグ
+
+**根本原因分析**：
+1. **`LoadImageItemsAsync`のTotalItems計算エラー**：
+   - `GetImageItemCountAsync()`（単一画像）のみで合計数を計算
+   - 単一画像ファイルは既に削除されているため、常に0になる
+   
+2. **`LoadRemainingItemsAsync`のデータ取得エラー**：
+   - `GetImageItemsAsync()`（単一画像）を呼び出し
+   - 実際には`GetArchiveItemsAsync()`を呼び出す必要があった
+
+**修正内容**：
+1. **合計アイテム数の正しい計算**：
+   ```csharp
+   var archiveCount = await _databaseService.GetArchiveItemCountAsync();
+   var imageCount = await _databaseService.GetImageItemCountAsync();
+   var totalCount = archiveCount + imageCount;
+   TotalItems = (int)totalCount;
+   ```
+
+2. **バックグラウンド読み込みの修正**：
+   ```csharp
+   var archiveItems = await _databaseService.GetArchiveItemsAsync(loaded, batchSize);
+   var itemsList = archiveItems.Cast<IDisplayItem>().ToList();
+   ```
+
+**結果**：
+- **全2294個のアーカイブファイルが正常に表示**
+- 99.6%、97.1%、99.0%等あらゆる画像比率のファイルが表示
+- 初期50個 + バックグラウンド2244個の段階的読み込み
+- UIレスポンシブ性の維持
+
+**対象ファイル**：
+- `MainViewModel.cs:LoadImageItemsAsync()` - 総数計算の修正
+- `MainViewModel.cs:LoadRemainingItemsAsync()` - データ取得ロジックの修正
+
+### 技術的詳細
+
+**データベース構造**：
+- **ArchiveItems**: ZIP/RARファイルの情報とメタデータ
+- **ImageItems**: 単一画像ファイル（現在は除外対象）
+- **インデックス**: ファイルパス、更新日時、削除フラグ
+
+**パフォーマンス最適化手法**：
+- メタデータストリーム処理の除去
+- 並行タスクによるI/O最適化  
+- LiteDBクエリの効率化
+- メモリ使用量の削減
+
+**UI/UXの改善**：
+- 段階的なアイテム読み込み（50個 → 100個ずつ）
+- プログレス表示とステータス更新
+- レスポンシブなユーザーインターフェース

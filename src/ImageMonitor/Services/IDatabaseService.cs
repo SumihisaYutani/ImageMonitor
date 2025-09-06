@@ -56,10 +56,16 @@ public interface IDatabaseService : IDisposable
     
     Task<IEnumerable<string>> GetScannedDirectoriesAsync();
     
+    Task<IEnumerable<string>> GetImageDirectoriesAsync();
+    
+    Task<IEnumerable<string>> GetArchiveDirectoriesAsync();
+    
     Task<int> CleanupItemsByDirectoryAsync(string directoryPath);
 
     // Maintenance operations
     Task<int> CleanupDeletedItemsAsync();
+    
+    Task<int> CleanupSingleImageItemsAsync();
     
     Task<int> CleanupOrphanedThumbnailsAsync();
     

@@ -120,8 +120,17 @@ public partial class MainViewModel : ObservableObject
             
             if (!settings.ScanDirectories.Any())
             {
-                _logger.LogInformation("No scan directories configured.");
-                StatusText = "No scan directories configured. Please add directories in settings.";
+                _logger.LogInformation("No scan directories configured. Running cleanup for removed directories.");
+                StatusText = "Cleaning up removed directories...";
+                
+                // スキャンディレクトリがない場合でも削除検出とクリーンアップを実行
+                var cleanupResults = await _imageScanService.ScanDirectoriesAsync(
+                    new List<string>(), _cancellationTokenSource.Token);
+                
+                // UI更新
+                await LoadImageItemsAsync();
+                
+                StatusText = "Cleanup completed. No scan directories configured.";
                 return;
             }
 
@@ -159,6 +168,13 @@ public partial class MainViewModel : ObservableObject
                         dbStopwatch.ElapsedMilliseconds, insertedCount);
                 }
                 
+                // 単一画像アイテムをクリーンアップ（アーカイブのみ表示するため）
+                var cleanupCount = await _databaseService.CleanupSingleImageItemsAsync();
+                if (cleanupCount > 0)
+                {
+                    _logger.LogInformation("Cleaned up {Count} single image items", cleanupCount);
+                }
+
                 // UI更新時間計測
                 var uiStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 await LoadImageItemsAsync();
@@ -330,10 +346,12 @@ public partial class MainViewModel : ObservableObject
             StatusText = "Loading images...";
             
             _logger.LogDebug("Getting total count...");
-            // Get total count first
-            var totalCount = await _databaseService.GetImageItemCountAsync();
+            // Get total count first - combine both archive and image items
+            var archiveCount = await _databaseService.GetArchiveItemCountAsync();
+            var imageCount = await _databaseService.GetImageItemCountAsync();
+            var totalCount = archiveCount + imageCount;
             TotalItems = (int)totalCount;
-            _logger.LogDebug("Total count: {Count}", totalCount);
+            _logger.LogDebug("Total count: {Count} (Archives: {ArchiveCount}, Images: {ImageCount})", totalCount, archiveCount, imageCount);
             
             // Clear existing items
             DisplayItems.Clear();
@@ -392,8 +410,9 @@ public partial class MainViewModel : ObservableObject
             
             while (loaded < totalCount)
             {
-                var items = await _databaseService.GetImageItemsAsync(loaded, batchSize);
-                var itemsList = items.ToList();
+                // Load archive items for remaining batch
+                var archiveItems = await _databaseService.GetArchiveItemsAsync(loaded, batchSize);
+                var itemsList = archiveItems.Cast<IDisplayItem>().ToList();
                 
                 if (!itemsList.Any())
                     break;

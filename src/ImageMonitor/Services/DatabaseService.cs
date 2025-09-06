@@ -795,6 +795,32 @@ public class DatabaseService : IDatabaseService
         });
     }
 
+    public async Task<int> CleanupSingleImageItemsAsync()
+    {
+        return await Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync();
+            try
+            {
+                // 単一画像アイテムをすべて削除（アーカイブのみ表示するため）
+                var deletedCount = _imageItems.DeleteAll();
+                
+                _logger.LogInformation("Cleaned up {Count} single image items", deletedCount);
+                
+                return deletedCount;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to cleanup single image items");
+                return 0;
+            }
+            finally
+            {
+                _operationLock.Release();
+            }
+        });
+    }
+
     public async Task<int> CleanupOrphanedThumbnailsAsync()
     {
         return await Task.Run(() =>
@@ -978,6 +1004,74 @@ public class DatabaseService : IDatabaseService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get scanned directories");
+                return Enumerable.Empty<string>();
+            }
+            finally
+            {
+                _operationLock.Release();
+            }
+        });
+    }
+
+    public async Task<IEnumerable<string>> GetImageDirectoriesAsync()
+    {
+        return await Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync();
+            try
+            {
+                var allFilePaths = _imageItems
+                    .Query()
+                    .Select(x => x.FilePath)
+                    .ToList();
+
+                var result = allFilePaths
+                    .Select(filePath => Path.GetDirectoryName(filePath))
+                    .Where(x => !string.IsNullOrEmpty(x))
+                    .Distinct()
+                    .ToList();
+
+                _logger.LogDebug("Retrieved {Count} image directories", result.Count);
+                
+                return result!;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get image directories");
+                return Enumerable.Empty<string>();
+            }
+            finally
+            {
+                _operationLock.Release();
+            }
+        });
+    }
+
+    public async Task<IEnumerable<string>> GetArchiveDirectoriesAsync()
+    {
+        return await Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync();
+            try
+            {
+                var allFilePaths = _archiveItems
+                    .Query()
+                    .Select(x => x.FilePath)
+                    .ToList();
+
+                var result = allFilePaths
+                    .Select(filePath => Path.GetDirectoryName(filePath))
+                    .Where(x => !string.IsNullOrEmpty(x))
+                    .Distinct()
+                    .ToList();
+
+                _logger.LogDebug("Retrieved {Count} archive directories", result.Count);
+                
+                return result!;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get archive directories");
                 return Enumerable.Empty<string>();
             }
             finally
