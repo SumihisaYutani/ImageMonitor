@@ -47,6 +47,8 @@ public interface IDatabaseService : IDisposable
     Task<IEnumerable<ImageItem>> GetNonArchivedImageItemsAsync(int offset, int limit);
     Task<bool> UpsertArchiveItemAsync(ArchiveItem archiveItem);
     
+    Task<IEnumerable<ArchiveItem>> SearchArchiveItemsAsync(SearchFilter filter);
+    
     // ScanHistory operations
     Task<bool> InsertScanHistoryAsync(ScanHistory scanHistory);
     

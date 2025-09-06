@@ -1,6 +1,7 @@
 using ImageMonitor.ViewModels;
 using ImageMonitor.Services;
 using ImageMonitor.Models;
+using System.Windows.Input;
 
 namespace ImageMonitor;
 
@@ -151,6 +152,18 @@ public partial class MainWindow : Window
     private void ClearSearch_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.SearchQuery = string.Empty;
+    }
+
+    private void SearchTextBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            // Enterキーが押されたら検索を実行
+            if (ViewModel.SearchImagesCommand.CanExecute(null))
+            {
+                ViewModel.SearchImagesCommand.Execute(null);
+            }
+        }
     }
 
     private void Properties_Click(object sender, RoutedEventArgs e)

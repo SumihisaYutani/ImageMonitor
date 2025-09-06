@@ -48,6 +48,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _isPropertiesPanelVisible = true;
 
+    // 検索結果キャッシュ
+    private readonly Dictionary<string, IEnumerable<ArchiveItem>> _searchCache = new();
+    private string _lastSearchQuery = string.Empty;
+
 
     public MainViewModel(
         IConfigurationService configService,
@@ -153,8 +157,14 @@ public partial class MainViewModel : ObservableObject
                 scanStopwatch.Stop();
                 
                 var scanTimeMs = scanStopwatch.ElapsedMilliseconds;
-                _logger.LogInformation("Full scanning phase completed in {ScanTime}ms - Found {ItemCount} items", 
-                    scanTimeMs, scanResults.Count);
+                
+                // 実際に処理されたアーカイブアイテム数を取得
+                var archiveCount = await _databaseService.GetArchiveItemCountAsync();
+                var imageCount = await _databaseService.GetImageItemCountAsync();
+                var totalProcessedItems = archiveCount + imageCount;
+                
+                _logger.LogInformation("Full scanning phase completed in {ScanTime}ms - Found {ItemCount} items (Archives: {ArchiveCount}, Images: {ImageCount})", 
+                    scanTimeMs, totalProcessedItems, archiveCount, imageCount);
                 
                 // データベース保存時間計測
                 if (scanResults.Any())
@@ -193,11 +203,11 @@ public partial class MainViewModel : ObservableObject
                 _logger.LogInformation("UI update phase: {UiTime}ms ({UiPercent:F1}%)", 
                     uiStopwatch.ElapsedMilliseconds, (uiStopwatch.ElapsedMilliseconds * 100.0 / totalTimeMs));
                 _logger.LogInformation("Performance: {ItemsPerSec:F2} items/second", itemsPerSecond);
-                _logger.LogInformation("Items inserted: {InsertedCount}", insertedCount);
+                _logger.LogInformation("Items inserted: {InsertedCount} (Database total: {TotalItems})", insertedCount, totalProcessedItems);
                 _logger.LogInformation("Scan type: Full");
                 _logger.LogInformation("=== END PERFORMANCE REPORT ===");
                 
-                StatusText = $"Full scan completed in {totalTimeSec:F1}s - Found {insertedCount} items ({itemsPerSecond:F1} items/sec)";
+                StatusText = $"Full scan completed in {totalTimeSec:F1}s - Found {totalProcessedItems} items ({itemsPerSecond:F1} items/sec)";
             }
             finally
             {
@@ -225,33 +235,83 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
+            var searchQuery = SearchQuery?.Trim() ?? string.Empty;
+            
+            // 空の検索クエリの場合は全てのアイテムを表示
+            if (string.IsNullOrEmpty(searchQuery))
+            {
+                await LoadImageItemsAsync();
+                return;
+            }
+            
             StatusText = "Searching...";
+            
+            // キャッシュをチェック
+            var cacheKey = $"{searchQuery}_{SortBy}_{SortDirection}";
+            if (_searchCache.TryGetValue(cacheKey, out var cachedResults))
+            {
+                _logger.LogDebug("Using cached search results for query: {Query}", searchQuery);
+                
+                // キャッシュされた結果をUIに表示
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    DisplayItems.Clear();
+                    foreach (var item in cachedResults)
+                    {
+                        DisplayItems.Add(item);
+                    }
+                    TotalItems = DisplayItems.Count;
+                    StatusText = $"Found {TotalItems} images (cached)";
+                });
+                return;
+            }
             
             var filter = new SearchFilter
             {
-                Query = SearchQuery,
+                Query = searchQuery,
                 IncludeArchives = true, // Always include archives
                 SortBy = SortBy,
                 SortDirection = SortDirection,
                 PageSize = 1000 // For now, load all results
             };
 
-            var results = await _databaseService.SearchImageItemsAsync(filter);
+            var results = await _databaseService.SearchArchiveItemsAsync(filter);
+            var resultsList = results.ToList(); // リストに変換してキャッシュ
             
-            DisplayItems.Clear();
-            foreach (var item in results)
+            // キャッシュに保存（最大10件まで）
+            if (_searchCache.Count >= 10)
             {
-                DisplayItems.Add(item);
+                var oldestKey = _searchCache.Keys.First();
+                _searchCache.Remove(oldestKey);
             }
+            _searchCache[cacheKey] = resultsList;
             
-            TotalItems = DisplayItems.Count;
-            StatusText = $"Found {TotalItems} images";
+            // UIスレッドでObservableCollectionを更新
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                DisplayItems.Clear();
+                foreach (var item in resultsList)
+                {
+                    DisplayItems.Add(item);
+                }
+                TotalItems = DisplayItems.Count;
+                StatusText = $"Found {TotalItems} images";
+            });
+            
+            _lastSearchQuery = searchQuery;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during image search");
             StatusText = $"Search failed: {ex.Message}";
         }
+    }
+
+    [RelayCommand]
+    private async Task ClearSearchAsync()
+    {
+        SearchQuery = string.Empty;
+        await LoadImageItemsAsync();
     }
 
     [RelayCommand]
@@ -353,10 +413,6 @@ public partial class MainViewModel : ObservableObject
             TotalItems = (int)totalCount;
             _logger.LogDebug("Total count: {Count} (Archives: {ArchiveCount}, Images: {ImageCount})", totalCount, archiveCount, imageCount);
             
-            // Clear existing items
-            DisplayItems.Clear();
-            _logger.LogDebug("Cleared existing items");
-            
             // Load first batch immediately (smaller initial load) - Load ArchiveItems only
             const int initialBatchSize = 50;
             _logger.LogDebug("Loading initial batch of {Size} archive items", initialBatchSize);
@@ -364,21 +420,29 @@ public partial class MainViewModel : ObservableObject
             var initialArchiveItemsList = initialArchiveItems.ToList();
             _logger.LogDebug("Retrieved {Count} initial archive items", initialArchiveItemsList.Count);
             
-            foreach (var item in initialArchiveItemsList)
-            {
-                DisplayItems.Add(item);
-            }
-            _logger.LogDebug("Added {Count} archive items to UI collection", initialArchiveItemsList.Count);
-            
             // Also load non-archived ImageItems
             var regularImageItems = await _databaseService.GetNonArchivedImageItemsAsync(0, initialBatchSize);
             var regularImageItemsList = regularImageItems.ToList();
             _logger.LogDebug("Retrieved {Count} regular image items", regularImageItemsList.Count);
             
-            foreach (var item in regularImageItemsList)
+            // UIスレッドでObservableCollectionを更新
+            await Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                DisplayItems.Add(item);
-            }
+                // Clear existing items
+                DisplayItems.Clear();
+                _logger.LogDebug("Cleared existing items");
+                
+                foreach (var item in initialArchiveItemsList)
+                {
+                    DisplayItems.Add(item);
+                }
+                _logger.LogDebug("Added {Count} archive items to UI collection", initialArchiveItemsList.Count);
+                
+                foreach (var item in regularImageItemsList)
+                {
+                    DisplayItems.Add(item);
+                }
+            });
             
             StatusText = $"Loaded {DisplayItems.Count} of {TotalItems} items";
             
@@ -450,14 +514,8 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSearchQueryChanged(string value)
     {
-        // Auto-search when query changes (with debounce in real implementation)
-        _ = Task.Delay(500).ContinueWith(async _ => 
-        {
-            if (SearchQuery == value) // Check if query hasn't changed
-            {
-                await SearchImagesAsync();
-            }
-        });
+        // 自動検索は無効化 - 手動検索のみ
+        // Auto-search disabled - manual search only
     }
 
     [RelayCommand]

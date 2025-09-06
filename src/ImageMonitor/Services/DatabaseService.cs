@@ -603,6 +603,90 @@ public class DatabaseService : IDatabaseService
         });
     }
 
+    public async Task<IEnumerable<ArchiveItem>> SearchArchiveItemsAsync(SearchFilter filter)
+    {
+        return await Task.Run(async () =>
+        {
+            await _operationLock.WaitAsync();
+            try
+            {
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                
+                // 基本フィルタを最初に適用（インデックスを最大限活用）
+                var query = _archiveItems.Query();
+                
+                // IsDeletedのフィルタを最初に適用（インデックス使用）
+                query = query.Where(x => !x.IsDeleted);
+                
+                // テキスト検索を適用（ファイル名のみ）
+                if (!string.IsNullOrEmpty(filter.Query))
+                {
+                    var searchTerm = filter.Query.ToLowerInvariant();
+                    query = query.Where(x => x.FileName.ToLower().Contains(searchTerm));
+                }
+                
+                // クエリの結果を実行（ソートは後でメモリ内で実行）
+                var results = query.ToList();
+                
+                // メモリ内でソート適用
+                switch (filter.SortBy)
+                {
+                    case SortBy.FileName:
+                        results = filter.SortDirection == SortDirection.Ascending 
+                            ? results.OrderBy(x => x.FileName).ToList()
+                            : results.OrderByDescending(x => x.FileName).ToList();
+                        break;
+                    case SortBy.FileSize:
+                        results = filter.SortDirection == SortDirection.Ascending 
+                            ? results.OrderBy(x => x.FileSize).ToList()
+                            : results.OrderByDescending(x => x.FileSize).ToList();
+                        break;
+                    case SortBy.CreatedAt:
+                        results = filter.SortDirection == SortDirection.Ascending 
+                            ? results.OrderBy(x => x.CreatedAt).ToList()
+                            : results.OrderByDescending(x => x.CreatedAt).ToList();
+                        break;
+                    case SortBy.ModifiedAt:
+                        results = filter.SortDirection == SortDirection.Ascending 
+                            ? results.OrderBy(x => x.ModifiedAt).ToList()
+                            : results.OrderByDescending(x => x.ModifiedAt).ToList();
+                        break;
+                    default:
+                        results = results.OrderBy(x => x.FileName).ToList();
+                        break;
+                }
+                
+                // ページングを適用
+                if (filter.PageSize > 0)
+                {
+                    results = results.Take(filter.PageSize).ToList();
+                }
+                
+                var totalTime = stopwatch.ElapsedMilliseconds;
+                
+                if (totalTime > 1000) // 1秒以上かかった場合は警告
+                {
+                    _logger.LogWarning("SearchArchiveItemsAsync slow query: {TotalTime}ms, Results: {Count}", totalTime, results.Count);
+                }
+                else
+                {
+                    _logger.LogDebug("SearchArchiveItemsAsync: {TotalTime}ms, Results: {Count}", totalTime, results.Count);
+                }
+                
+                return results;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to search archive items with filter: {@Filter}", filter);
+                return Enumerable.Empty<ArchiveItem>();
+            }
+            finally
+            {
+                _operationLock.Release();
+            }
+        });
+    }
+
     public async Task<long> GetImageItemCountAsync()
     {
         return await Task.Run(() => _imageItems.Count(x => !x.IsDeleted));

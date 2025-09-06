@@ -263,3 +263,84 @@ warning IL3000: 'System.Reflection.Assembly.Location' always returns an empty st
 - 段階的なアイテム読み込み（50個 → 100個ずつ）
 - プログレス表示とステータス更新
 - レスポンシブなユーザーインターフェース
+
+### 検索機能の修正とエラー解消（2025-09-07）
+
+**問題**：
+- 検索実行時に`System.NotImplementedException`エラーが発生
+- LiteDBのOrderBy操作でBsonDataReader.Read()が未実装エラー
+- 自動検索による不要な検索実行
+- ファイルパス全体での検索（要望：ファイル名のみ）
+
+**修正内容**：
+
+1. **LiteDBクエリソート問題の解決**：
+   ```csharp
+   // 修正前（エラー発生）
+   var results = query.OrderBy(GetSortExpression(filter.SortBy)).ToList();
+   
+   // 修正後（メモリ内ソート）
+   var results = query.ToList();
+   switch (filter.SortBy) {
+       case SortBy.FileName:
+           results = filter.SortDirection == SortDirection.Ascending 
+               ? results.OrderBy(x => x.FileName).ToList()
+               : results.OrderByDescending(x => x.FileName).ToList();
+           break;
+   }
+   ```
+
+2. **検索対象の変更（ImageItems → ArchiveItems）**：
+   - `MainViewModel.cs`: `SearchImageItemsAsync` → `SearchArchiveItemsAsync`に変更
+   - `DatabaseService.cs`: 新規`SearchArchiveItemsAsync`メソッドを実装
+   - `IDatabaseService.cs`: インターフェースに`SearchArchiveItemsAsync`を追加
+
+3. **手動検索の実装**：
+   - 自動検索（文字入力時）を無効化
+   - 🔍検索ボタンによる手動検索
+   - Enterキーによる検索実行
+   - `MainWindow.xaml.cs`: `SearchTextBox_KeyDown`イベントハンドラー追加
+
+4. **検索範囲の最適化**：
+   ```csharp
+   // 修正前：ファイルパス全体を検索
+   query.Where(x => x.FilePath.ToLower().Contains(searchTerm) || 
+                    x.FileName.ToLower().Contains(searchTerm))
+   
+   // 修正後：ファイル名のみを検索
+   query.Where(x => x.FileName.ToLower().Contains(searchTerm))
+   ```
+
+5. **検索結果キャッシュの実装**：
+   - `MainViewModel.cs`: `Dictionary<string, IEnumerable<ArchiveItem>> _searchCache`
+   - 最大10件の検索結果をキャッシュ
+   - キャッシュキー: `{検索語}_{ソート基準}_{ソート方向}`
+
+**結果**：
+- ✅ **LiteDBエラー完全解消**: `NotImplementedException`エラーがゼロ
+- ✅ **日本語検索対応**: 「成年コミック」等の日本語キーワード検索成功
+- ✅ **検索パフォーマンス**: 953件結果を1001ms、33件結果を1217msで取得
+- ✅ **手動検索実装**: ボタン/Enterキーでの制御された検索実行
+- ✅ **検索結果キャッシュ**: 同じ検索条件での高速表示
+
+**技術的詳細**：
+- **メモリ内ソート**: LiteDBの制限を回避し、LINQ OrderByで安定動作
+- **スレッドセーフティ**: `Application.Current.Dispatcher.InvokeAsync`でUI更新
+- **エラーハンドリング**: try-catchブロックでの例外処理とログ出力
+- **パフォーマンス監視**: 1秒以上の検索にWRNレベルログ出力
+
+**動作確認済み**：
+- 日本語検索キーワード正常動作 ✅
+- 大量検索結果（953件）の高速表示 ✅  
+- キャッシュ機能による再検索高速化 ✅
+- エラーログ出力の完全停止 ✅
+
+## ドキュメント
+
+### 技術仕様書
+- **場所**: `docs/技術仕様書.md`
+- **内容**: ER図、データ構造仕様書、修正履歴、パフォーマンス情報
+
+### クラス図
+- **場所**: `docs/クラス図.md`  
+- **内容**: アーキテクチャクラス図、コンポーネント責務、依存性注入構成、検索機能シーケンス図

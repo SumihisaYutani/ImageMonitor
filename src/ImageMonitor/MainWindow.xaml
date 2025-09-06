@@ -73,7 +73,9 @@
             <!-- Search Box -->
             <Label Content="Search:"/>
             <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}" 
-                     Width="200" Margin="4" ToolTip="Search by filename or archive name"/>
+                     Width="200" Margin="4" ToolTip="Search by filename (Press Enter to search)"
+                     KeyDown="SearchTextBox_KeyDown"/>
+            <Button Content="🔍 Search" Command="{Binding SearchImagesCommand}" Style="{StaticResource IconButtonStyle}" Margin="2,0"/>
             <Button Content="Clear" Click="ClearSearch_Click" Style="{StaticResource IconButtonStyle}"/>
             
             <Separator/>
