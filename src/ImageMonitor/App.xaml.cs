@@ -11,6 +11,9 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        // Prevent WPF from creating automatic windows
+        this.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        
         var appStartStopwatch = System.Diagnostics.Stopwatch.StartNew();
         var stepTimes = new List<(string step, long ms)>();
         
@@ -37,22 +40,6 @@ public partial class App : Application
 
         try
         {
-            // デバッグ: WPFイベント監視を設定
-            this.Startup += (s, args) => {
-                Log.Information($"[DEBUG] WPF Application.Startup event fired");
-                Console.WriteLine($"[DEBUG] WPF Application.Startup event fired");
-            };
-            
-            this.Activated += (s, args) => {
-                Log.Information($"[DEBUG] WPF Application.Activated event fired");
-                Console.WriteLine($"[DEBUG] WPF Application.Activated event fired");
-            };
-            
-            // ウィンドウ生成監視
-            this.MainWindow = null; // 明示的にnullに設定
-            Log.Information($"[DEBUG] Application.MainWindow set to null explicitly");
-            Console.WriteLine($"[DEBUG] Application.MainWindow set to null explicitly");
-            
             // Global exception handling
             AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
             {
@@ -93,6 +80,10 @@ public partial class App : Application
             Console.WriteLine($"[DEBUG] About to call mainWindow.Show()");
             
             mainWindow.Show();
+            
+            // Set shutdown mode to close when main window closes
+            this.ShutdownMode = ShutdownMode.OnMainWindowClose;
+            this.MainWindow = mainWindow;
             
             Log.Information($"[DEBUG] mainWindow.Show() completed");
             Console.WriteLine($"[DEBUG] mainWindow.Show() completed");

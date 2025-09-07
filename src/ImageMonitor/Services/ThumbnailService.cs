@@ -13,7 +13,13 @@ public class ThumbnailService : IThumbnailService
     private readonly SemaphoreSlim _operationLock = new(4, 4); // 並行処理数を4に増加
     private readonly ConcurrentDictionary<string, Task<string?>> _pendingThumbnails = new();
     private readonly ConcurrentDictionary<string, DateTime> _thumbnailCache = new();
-    private static readonly string[] SupportedImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".gif" };
+    
+    // パフォーマンス統計
+    private long _totalThumbnailRequests = 0;
+    private long _cacheHits = 0;
+    private long _actualGenerations = 0;
+    private readonly List<long> _generationTimes = new();
+    private static readonly string[] SupportedImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp" };
     private static readonly string[] SupportedArchiveExtensions = { ".zip", ".rar" };
 
     public ThumbnailService(ILogger<ThumbnailService> logger, IConfigurationService configService)
@@ -37,6 +43,9 @@ public class ThumbnailService : IThumbnailService
         var thumbnailStopwatch = System.Diagnostics.Stopwatch.StartNew();
         var stepTimes = new List<(string step, long ms)>();
         
+        Interlocked.Increment(ref _totalThumbnailRequests);
+        _logger.LogDebug("[PERF-THUMB] Starting thumbnail generation for {ImagePath}", imagePath);
+        
         if (string.IsNullOrEmpty(imagePath) || !File.Exists(imagePath))
         {
             _logger.LogWarning("Image file not found: {ImagePath}", imagePath);
@@ -53,8 +62,9 @@ public class ThumbnailService : IThumbnailService
             var imageTime = File.GetLastWriteTime(imagePath);
             if (cachedTime >= imageTime && File.Exists(thumbnailPath))
             {
+                Interlocked.Increment(ref _cacheHits);
                 thumbnailStopwatch.Stop();
-                _logger.LogDebug("Using cached thumbnail: {ThumbnailPath} in {TotalTime}ms", 
+                _logger.LogDebug("[PERF-THUMB] Using cached thumbnail: {ThumbnailPath} in {TotalTime}ms", 
                     thumbnailPath, thumbnailStopwatch.ElapsedMilliseconds);
                 return thumbnailPath;
             }
@@ -74,9 +84,10 @@ public class ThumbnailService : IThumbnailService
             
             if (thumbnailTime >= imageTime)
             {
+                Interlocked.Increment(ref _cacheHits);
                 _thumbnailCache.TryAdd(cacheKey, thumbnailTime);
                 thumbnailStopwatch.Stop();
-                _logger.LogDebug("Using existing thumbnail: {ThumbnailPath} in {TotalTime}ms", 
+                _logger.LogDebug("[PERF-THUMB] Using existing thumbnail: {ThumbnailPath} in {TotalTime}ms", 
                     thumbnailPath, thumbnailStopwatch.ElapsedMilliseconds);
                 return thumbnailPath;
             }
@@ -144,13 +155,29 @@ public class ThumbnailService : IThumbnailService
             var result = await GenerateThumbnailInternalAsync(imagePath, thumbnailPath, size);
             stepTimes.Add(("Thumbnail generation", thumbnailStopwatch.ElapsedMilliseconds));
             
+            thumbnailStopwatch.Stop();
+            var totalTime = thumbnailStopwatch.ElapsedMilliseconds;
+            
             if (result != null)
             {
+                Interlocked.Increment(ref _actualGenerations);
+                lock (_generationTimes)
+                {
+                    _generationTimes.Add(totalTime);
+                    // 最大1000件の統計を保持
+                    if (_generationTimes.Count > 1000)
+                    {
+                        _generationTimes.RemoveAt(0);
+                    }
+                }
                 _thumbnailCache.TryAdd(cacheKey, DateTime.Now);
             }
             
-            thumbnailStopwatch.Stop();
-            var totalTime = thumbnailStopwatch.ElapsedMilliseconds;
+            // 統計情報を定期的に出力（50件ごと）
+            if (_actualGenerations % 50 == 0)
+            {
+                LogPerformanceStatistics();
+            }
             
             // パフォーマンス詳細情報をログ出力
             if (totalTime > 1000) // 1秒以上の場合は詳細ログ
@@ -162,17 +189,17 @@ public class ThumbnailService : IThumbnailService
                     return $"{step.step}: {stepDuration}ms";
                 }));
                 
-                _logger.LogWarning("Slow thumbnail generation: {ImagePath} in {TotalTime}ms - Steps: {StepDetails}", 
+                _logger.LogWarning("[PERF-THUMB] Slow thumbnail generation: {ImagePath} in {TotalTime}ms - Steps: {StepDetails}", 
                     imagePath, totalTime, stepDetails);
             }
             else if (totalTime > 200) // 200ms以上は軽いログ
             {
-                _logger.LogInformation("Generated thumbnail: {ImagePath} in {TotalTime}ms", 
+                _logger.LogInformation("[PERF-THUMB] Generated thumbnail: {ImagePath} in {TotalTime}ms", 
                     imagePath, totalTime);
             }
             else
             {
-                _logger.LogDebug("Generated thumbnail: {ImagePath} in {TotalTime}ms", 
+                _logger.LogDebug("[PERF-THUMB] Generated thumbnail: {ImagePath} in {TotalTime}ms", 
                     imagePath, totalTime);
             }
             
@@ -330,6 +357,7 @@ public class ThumbnailService : IThumbnailService
 
             // 最初（最も若番）の画像エントリを使用
             var firstImageEntry = imageEntries.First();
+            var imageExtension = Path.GetExtension(firstImageEntry.FullName);
             _logger.LogDebug("Using first image for thumbnail: {ImagePath} in {ZipPath}", 
                 firstImageEntry.FullName, zipPath);
 
@@ -338,7 +366,7 @@ public class ThumbnailService : IThumbnailService
             await entryStream.CopyToAsync(memoryStream);
             memoryStream.Seek(0, SeekOrigin.Begin);
 
-            return await GenerateThumbnailFromStreamAsync(memoryStream, thumbnailPath, size);
+            return await GenerateThumbnailFromStreamAsync(memoryStream, thumbnailPath, size, imageExtension);
         }
         catch (Exception ex)
         {
@@ -369,6 +397,7 @@ public class ThumbnailService : IThumbnailService
 
             // 最初（最も若番）の画像エントリを使用
             var firstImageEntry = imageEntries.First();
+            var imageExtension = Path.GetExtension(firstImageEntry.Key);
             _logger.LogDebug("Using first image for thumbnail: {ImagePath} in {RarPath}", 
                 firstImageEntry.Key, rarPath);
 
@@ -377,7 +406,7 @@ public class ThumbnailService : IThumbnailService
             await entryStream.CopyToAsync(memoryStream);
             memoryStream.Seek(0, SeekOrigin.Begin);
 
-            return await GenerateThumbnailFromStreamAsync(memoryStream, thumbnailPath, size);
+            return await GenerateThumbnailFromStreamAsync(memoryStream, thumbnailPath, size, imageExtension);
         }
         catch (Exception ex)
         {
@@ -390,8 +419,9 @@ public class ThumbnailService : IThumbnailService
     {
         try
         {
+            var imageExtension = Path.GetExtension(imagePath);
             using var fileStream = File.OpenRead(imagePath);
-            return await GenerateThumbnailFromStreamAsync(fileStream, thumbnailPath, size);
+            return await GenerateThumbnailFromStreamAsync(fileStream, thumbnailPath, size, imageExtension);
         }
         catch (Exception ex)
         {
@@ -400,7 +430,7 @@ public class ThumbnailService : IThumbnailService
         }
     }
 
-    private async Task<string?> GenerateThumbnailFromStreamAsync(Stream imageStream, string thumbnailPath, int size)
+    private async Task<string?> GenerateThumbnailFromStreamAsync(Stream imageStream, string thumbnailPath, int size, string fileExtension = "")
     {
         try
         {
@@ -428,10 +458,35 @@ public class ThumbnailService : IThumbnailService
                     
                     try
                     {
-                        decoder = BitmapDecoder.Create(
-                            imageStream, 
-                            BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.IgnoreColorProfile, 
-                            BitmapCacheOption.OnLoad);
+                        // WebP形式の特別処理
+                        if (fileExtension.ToLower() == ".webp")
+                        {
+                            // WebP用の特別なデコーダー設定を試す
+                            try
+                            {
+                                decoder = BitmapDecoder.Create(
+                                    imageStream,
+                                    BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.IgnoreColorProfile,
+                                    BitmapCacheOption.OnLoad);
+                            }
+                            catch (NotSupportedException)
+                            {
+                                _logger.LogWarning("WebP format not supported by current WPF decoder for extension: {Extension}", fileExtension);
+                                return null;
+                            }
+                            catch (FileFormatException)
+                            {
+                                _logger.LogWarning("WebP file format error for extension: {Extension}", fileExtension);
+                                return null;
+                            }
+                        }
+                        else
+                        {
+                            decoder = BitmapDecoder.Create(
+                                imageStream, 
+                                BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.IgnoreColorProfile, 
+                                BitmapCacheOption.OnLoad);
+                        }
                         
                         if (decoder.Frames.Count == 0)
                         {
@@ -633,8 +688,34 @@ public class ThumbnailService : IThumbnailService
         return Convert.ToHexString(hashBytes)[..16]; // 最初の16文字を使用
     }
 
+    private void LogPerformanceStatistics()
+    {
+        var totalRequests = Interlocked.Read(ref _totalThumbnailRequests);
+        var cacheHits = Interlocked.Read(ref _cacheHits);
+        var actualGens = Interlocked.Read(ref _actualGenerations);
+        
+        var cacheHitRate = totalRequests > 0 ? (double)cacheHits / totalRequests * 100 : 0;
+        
+        lock (_generationTimes)
+        {
+            if (_generationTimes.Count > 0)
+            {
+                var avgTime = _generationTimes.Average();
+                var maxTime = _generationTimes.Max();
+                var minTime = _generationTimes.Min();
+                
+                _logger.LogInformation(
+                    "[PERF-THUMB-STATS] Requests: {TotalRequests}, Cache Hits: {CacheHits} ({CacheHitRate:F1}%), " +
+                    "Generations: {ActualGenerations}, Avg Time: {AvgTime:F1}ms, Min: {MinTime}ms, Max: {MaxTime}ms",
+                    totalRequests, cacheHits, cacheHitRate, actualGens, avgTime, minTime, maxTime);
+            }
+        }
+    }
+    
     public void Dispose()
     {
+        // 終了時に最終統計を出力
+        LogPerformanceStatistics();
         _operationLock?.Dispose();
     }
 }

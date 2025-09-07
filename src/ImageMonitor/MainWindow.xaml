@@ -107,11 +107,12 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Image List -->
+            <!-- Image List with Virtualization -->
             <ListBox Grid.Column="0" 
                      ItemsSource="{Binding DisplayItems}"
                      SelectedItem="{Binding SelectedDisplayItem}"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ScrollViewer.CanContentScroll="True"
                      VirtualizingStackPanel.IsVirtualizing="True"
                      VirtualizingStackPanel.VirtualizationMode="Recycling">
                 

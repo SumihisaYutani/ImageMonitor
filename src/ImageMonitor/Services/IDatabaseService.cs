@@ -44,6 +44,9 @@ public interface IDatabaseService : IDisposable
     
     Task<long> GetArchiveItemCountAsync();
     Task<IEnumerable<ArchiveItem>> GetArchiveItemsAsync(int offset, int limit);
+    Task<IEnumerable<ArchiveItem>> GetArchiveItemsBatchAsync(int offset, int limit);
+    Task<IEnumerable<ArchiveItem>> GetArchiveItemsAfterDateAsync(DateTime? lastCreatedAt, int limit);
+    Task<IEnumerable<ArchiveItem>> GetArchiveItemsAfterIdAsync(string? lastId, int limit);
     Task<IEnumerable<ImageItem>> GetNonArchivedImageItemsAsync(int offset, int limit);
     Task<bool> UpsertArchiveItemAsync(ArchiveItem archiveItem);
     

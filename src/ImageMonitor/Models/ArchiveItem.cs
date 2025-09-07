@@ -38,6 +38,36 @@ public class ArchiveItem : IDisplayItem
     public bool IsArchived => true; // ArchiveItemは常にアーカイブ
     public string FormattedFileSize => FormatFileSize(FileSize);
     
+    private string? _cachedResolution;
+    public string Resolution 
+    { 
+        get 
+        {
+            if (_cachedResolution != null) 
+                return _cachedResolution;
+                
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            
+            if (Images != null && Images.Count > 0)
+            {
+                var firstImage = Images[0];
+                _cachedResolution = firstImage.Resolution;
+            }
+            else
+            {
+                _cachedResolution = "Unknown";
+            }
+            
+            sw.Stop();
+            if (sw.ElapsedMilliseconds > 10)
+            {
+                System.Diagnostics.Debug.WriteLine($"[PERF-UI] Slow Resolution property for {DisplayName}: {sw.ElapsedMilliseconds}ms");
+            }
+            
+            return _cachedResolution;
+        }
+    }
+    
     public string ImageRatioPercentage => $"{ImageRatio:P0}";
 
     private static string FormatFileSize(long bytes)

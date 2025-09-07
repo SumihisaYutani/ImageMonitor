@@ -12,7 +12,7 @@ public class AppSettings
     
     public List<string> SupportedImageFormats { get; set; } = new()
     {
-        ".jpg", ".jpeg", ".png"
+        ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"
     };
     
     public List<string> SupportedArchiveFormats { get; set; } = new()

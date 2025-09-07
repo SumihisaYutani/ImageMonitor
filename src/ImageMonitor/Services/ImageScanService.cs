@@ -32,7 +32,7 @@ public class ImageScanService : IImageScanService
     private readonly Queue<ImageItem> _imageItemPool = new();
     private readonly object _poolLock = new object();
     
-    private static readonly string[] SupportedImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".gif" };
+    private static readonly string[] SupportedImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp" };
     private static readonly string[] SupportedArchiveExtensions = { ".zip", ".rar" };
 
     public event EventHandler<ScanProgressEventArgs>? ScanProgress;
@@ -1978,8 +1978,19 @@ public class ImageScanService : IImageScanService
         
         foreach (var existingDir in allExistingDirectories)
         {
-            // 現在の設定に存在しない、または物理的に存在しないディレクトリを検出
-            if (!currentDirectories.Contains(existingDir) || !Directory.Exists(existingDir))
+            // 物理的に存在しないディレクトリを検出
+            if (!Directory.Exists(existingDir))
+            {
+                deletedDirectories.Add(existingDir);
+                continue;
+            }
+            
+            // 現在の設定ディレクトリまたはそのサブディレクトリかどうかをチェック
+            bool isWithinScanDirectories = currentDirectories.Any(scanDir => 
+                existingDir.Equals(scanDir, StringComparison.OrdinalIgnoreCase) ||
+                existingDir.StartsWith(scanDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+            
+            if (!isWithinScanDirectories)
             {
                 deletedDirectories.Add(existingDir);
             }

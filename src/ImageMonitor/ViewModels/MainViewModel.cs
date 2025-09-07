@@ -400,9 +400,12 @@ public partial class MainViewModel : ObservableObject
 
     private async Task LoadImageItemsAsync()
     {
+        var loadStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var stepTimes = new List<(string step, long ms)>();
+        
         try
         {
-            _logger.LogDebug("Starting LoadImageItemsAsync");
+            _logger.LogInformation("[PERF] Starting LoadImageItemsAsync");
             StatusText = "Loading images...";
             
             _logger.LogDebug("Getting total count...");
@@ -411,19 +414,26 @@ public partial class MainViewModel : ObservableObject
             var imageCount = await _databaseService.GetImageItemCountAsync();
             var totalCount = archiveCount + imageCount;
             TotalItems = (int)totalCount;
+            stepTimes.Add(("Database count query", loadStopwatch.ElapsedMilliseconds));
             _logger.LogDebug("Total count: {Count} (Archives: {ArchiveCount}, Images: {ImageCount})", totalCount, archiveCount, imageCount);
             
-            // Load first batch immediately (smaller initial load) - Load ArchiveItems only
+            // Load first batch immediately
             const int initialBatchSize = 50;
             _logger.LogDebug("Loading initial batch of {Size} archive items", initialBatchSize);
             var initialArchiveItems = await _databaseService.GetArchiveItemsAsync(0, initialBatchSize);
             var initialArchiveItemsList = initialArchiveItems.ToList();
+            stepTimes.Add(("Initial archive items query", loadStopwatch.ElapsedMilliseconds));
             _logger.LogDebug("Retrieved {Count} initial archive items", initialArchiveItemsList.Count);
             
             // Also load non-archived ImageItems
             var regularImageItems = await _databaseService.GetNonArchivedImageItemsAsync(0, initialBatchSize);
             var regularImageItemsList = regularImageItems.ToList();
+            stepTimes.Add(("Regular image items query", loadStopwatch.ElapsedMilliseconds));
             _logger.LogDebug("Retrieved {Count} regular image items", regularImageItemsList.Count);
+            
+            // UIレベルでソートを適用（データベースソートを除去したため）
+            var sortedArchiveItems = ApplyUILevelSort(initialArchiveItemsList.Cast<IDisplayItem>()).ToList();
+            var sortedImageItems = ApplyUILevelSort(regularImageItemsList.Cast<IDisplayItem>()).ToList();
             
             // UIスレッドでObservableCollectionを更新
             await Application.Current.Dispatcher.InvokeAsync(() =>
@@ -432,19 +442,42 @@ public partial class MainViewModel : ObservableObject
                 DisplayItems.Clear();
                 _logger.LogDebug("Cleared existing items");
                 
-                foreach (var item in initialArchiveItemsList)
+                foreach (var item in sortedArchiveItems)
                 {
                     DisplayItems.Add(item);
                 }
-                _logger.LogDebug("Added {Count} archive items to UI collection", initialArchiveItemsList.Count);
+                _logger.LogDebug("Added {Count} sorted archive items to UI collection", sortedArchiveItems.Count);
                 
-                foreach (var item in regularImageItemsList)
+                foreach (var item in sortedImageItems)
                 {
                     DisplayItems.Add(item);
                 }
+                _logger.LogDebug("Added {Count} sorted image items to UI collection", sortedImageItems.Count);
             });
             
+            stepTimes.Add(("UI collection update", loadStopwatch.ElapsedMilliseconds));
+            
             StatusText = $"Loaded {DisplayItems.Count} of {TotalItems} items";
+            
+            loadStopwatch.Stop();
+            var totalLoadTime = loadStopwatch.ElapsedMilliseconds;
+            
+            // パフォーマンス詳細情報をログ出力
+            var stepDetails = string.Join(", ", stepTimes.Select((step, i) => 
+            {
+                var prevTime = i > 0 ? stepTimes[i-1].ms : 0;
+                var stepDuration = step.ms - prevTime;
+                return $"{step.step}: {stepDuration}ms";
+            }));
+            
+            if (totalLoadTime > 1000) // 1秒以上は警告
+            {
+                _logger.LogWarning("[PERF] Slow initial load: {TotalTime}ms - Steps: {StepDetails}", totalLoadTime, stepDetails);
+            }
+            else
+            {
+                _logger.LogInformation("[PERF] Initial load completed: {TotalTime}ms - Steps: {StepDetails}", totalLoadTime, stepDetails);
+            }
             
             // Load remaining items progressively in background
             if (totalCount > initialBatchSize)
@@ -466,25 +499,41 @@ public partial class MainViewModel : ObservableObject
     
     private async Task LoadRemainingItemsAsync(int skip)
     {
+        var backgroundStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var batchTimes = new List<(int batch, long ms, int itemCount)>();
+        
         try
         {
-            const int batchSize = 100;
+            _logger.LogInformation("[PERF] Starting reliable offset-based pagination");
+            const int batchSize = 300; // さらに大きなバッチサイズ
             var totalCount = TotalItems;
             var loaded = skip;
             
+            _logger.LogInformation("[PERF] Loading all {TotalItems} items with offset-based pagination, starting from offset: {Skip}", 
+                TotalItems, skip);
+            
+            var batchNumber = 1;
             while (loaded < totalCount)
             {
-                // Load archive items for remaining batch
-                var archiveItems = await _databaseService.GetArchiveItemsAsync(loaded, batchSize);
+                var batchStart = backgroundStopwatch.ElapsedMilliseconds;
+                
+                // offset-basedクエリを使用（確実で信頼性あり）
+                var archiveItems = await _databaseService.GetArchiveItemsAfterIdAsync(loaded.ToString(), batchSize);
                 var itemsList = archiveItems.Cast<IDisplayItem>().ToList();
+                
+                var batchEnd = backgroundStopwatch.ElapsedMilliseconds;
+                batchTimes.Add((batchNumber, batchEnd - batchStart, itemsList.Count));
                 
                 if (!itemsList.Any())
                     break;
                 
-                // Add items to UI thread
+                // UIレベルでソートしてから追加
+                var sortedItems = ApplyUILevelSort(itemsList).ToList();
+                
+                // Add sorted items to UI thread
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    foreach (var item in itemsList)
+                    foreach (var item in sortedItems)
                     {
                         DisplayItems.Add(item);
                     }
@@ -492,9 +541,25 @@ public partial class MainViewModel : ObservableObject
                 });
                 
                 loaded += itemsList.Count;
+                batchNumber++;
                 
                 // Small delay to prevent UI blocking
-                await Task.Delay(10);
+                await Task.Delay(2); // さらに短縮
+            }
+            
+            backgroundStopwatch.Stop();
+            var totalBackgroundTime = backgroundStopwatch.ElapsedMilliseconds;
+            
+            // バックグラウンド読み込みパフォーマンスログ
+            var batchDetails = string.Join(", ", batchTimes.Select(b => $"Batch {b.batch}: {b.ms}ms ({b.itemCount} items)"));
+            
+            if (totalBackgroundTime > 5000) // 5秒以上は警告
+            {
+                _logger.LogWarning("[PERF] Slow background load: {TotalTime}ms - Batches: {BatchDetails}", totalBackgroundTime, batchDetails);
+            }
+            else
+            {
+                _logger.LogInformation("[PERF] Background load completed: {TotalTime}ms - Batches: {BatchDetails}", totalBackgroundTime, batchDetails);
             }
             
             Application.Current.Dispatcher.Invoke(() =>
@@ -626,5 +691,38 @@ public partial class MainViewModel : ObservableObject
         {
             _logger.LogError(ex, "Error during thumbnail regeneration");
         }
+    }
+
+    /// <summary>
+    /// UIレベルでソートを適用する（データベースソート除去のため）
+    /// </summary>
+    private IEnumerable<IDisplayItem> ApplyUILevelSort(IEnumerable<IDisplayItem> items)
+    {
+        return SortBy switch
+        {
+            SortBy.FileName => SortDirection == SortDirection.Ascending 
+                ? items.OrderBy(x => x.FileName) 
+                : items.OrderByDescending(x => x.FileName),
+            SortBy.FileSize => SortDirection == SortDirection.Ascending 
+                ? items.OrderBy(x => x.FileSize) 
+                : items.OrderByDescending(x => x.FileSize),
+            SortBy.CreatedAt => SortDirection == SortDirection.Ascending 
+                ? items.OrderBy(x => x.CreatedAt) 
+                : items.OrderByDescending(x => x.CreatedAt),
+            SortBy.ModifiedAt => SortDirection == SortDirection.Ascending 
+                ? items.OrderBy(x => x.ModifiedAt) 
+                : items.OrderByDescending(x => x.ModifiedAt),
+            SortBy.DateTaken => SortDirection == SortDirection.Ascending 
+                ? items.OrderBy(x => x.CreatedAt)  // DateTakenがないのでCreatedAtを使用
+                : items.OrderByDescending(x => x.CreatedAt),
+            SortBy.Width => SortDirection == SortDirection.Ascending 
+                ? items.OrderBy(x => x.FileSize)  // WidthがないのでFileSizeを使用
+                : items.OrderByDescending(x => x.FileSize),
+            SortBy.Height => SortDirection == SortDirection.Ascending 
+                ? items.OrderBy(x => x.FileSize)  // HeightがないのでFileSizeを使用
+                : items.OrderByDescending(x => x.FileSize),
+            // デフォルト: ScanDateで最新順（データベースソートから移行）
+            _ => items.OrderByDescending(x => x.ScanDate)
+        };
     }
 }

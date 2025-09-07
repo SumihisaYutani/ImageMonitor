@@ -10,6 +10,7 @@ public class DatabaseService : IDatabaseService
     private readonly ILiteCollection<ScanHistory> _scanHistory;
     private readonly ILogger<DatabaseService> _logger;
     private readonly SemaphoreSlim _operationLock = new(1, 1);
+    
 
     public DatabaseService(ILogger<DatabaseService> logger)
     {
@@ -37,8 +38,6 @@ public class DatabaseService : IDatabaseService
     public async Task InitializeAsync()
     {
         await _operationLock.WaitAsync();
-        var initStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var stepTimes = new List<(string step, long ms)>();
         
         try
         {
@@ -57,15 +56,6 @@ public class DatabaseService : IDatabaseService
             _imageItems.EnsureIndex(x => x.ArchiveImageRatio);
             _imageItems.EnsureIndex(x => x.Width);
             _imageItems.EnsureIndex(x => x.Height);
-            stepTimes.Add(("ImageItems basic indexes", initStopwatch.ElapsedMilliseconds));
-            
-            // 複合インデックスでパフォーマンス向上（LiteDBでは個別インデックスを使用）
-            _imageItems.EnsureIndex(x => x.IsDeleted);
-            _imageItems.EnsureIndex(x => x.ScanDate);
-            _imageItems.EnsureIndex(x => x.IsArchived);
-            _imageItems.EnsureIndex(x => x.FileName);
-            _imageItems.EnsureIndex(x => x.FileSize);
-            stepTimes.Add(("ImageItems composite indexes", initStopwatch.ElapsedMilliseconds));
             
             // Create indexes for ArchiveItems
             _archiveItems.EnsureIndex(x => x.FilePath, true); // Unique index
@@ -73,33 +63,16 @@ public class DatabaseService : IDatabaseService
             _archiveItems.EnsureIndex(x => x.FileSize);
             _archiveItems.EnsureIndex(x => x.ImageRatio);
             _archiveItems.EnsureIndex(x => x.ScanDate);
+            _archiveItems.EnsureIndex(x => x.CreatedAt); // パフォーマンス最適化用
+            _archiveItems.EnsureIndex(x => x.ModifiedAt); // パフォーマンス最適化用
             _archiveItems.EnsureIndex(x => x.IsDeleted);
-            stepTimes.Add(("ArchiveItems indexes", initStopwatch.ElapsedMilliseconds));
             
             // Create indexes for ScanHistory
             _scanHistory.EnsureIndex(x => x.DirectoryPath);
             _scanHistory.EnsureIndex(x => x.ScanDate);
             _scanHistory.EnsureIndex(x => x.ScanType);
-            stepTimes.Add(("ScanHistory indexes", initStopwatch.ElapsedMilliseconds));
             
-            initStopwatch.Stop();
-            var totalInitTime = initStopwatch.ElapsedMilliseconds;
-            
-            // パフォーマンス詳細情報をログ出力
-            var stepDetails = string.Join(", ", stepTimes.Select((step, i) => 
-            {
-                var prevTime = i > 0 ? stepTimes[i-1].ms : 0;
-                var stepDuration = step.ms - prevTime;
-                return $"{step.step}: {stepDuration}ms";
-            }));
-            
-            _logger.LogInformation("Database initialization completed in {TotalTime}ms - Steps: {StepDetails}", 
-                totalInitTime, stepDetails);
-            
-            if (totalInitTime > 2000) // 2秒以上は警告
-            {
-                _logger.LogWarning("Slow database initialization: {TotalTime}ms", totalInitTime);
-            }
+            _logger.LogInformation("Database initialized successfully");
         }
         finally
         {
@@ -786,7 +759,25 @@ public class DatabaseService : IDatabaseService
 
     public async Task<long> GetArchiveItemCountAsync()
     {
-        return await Task.Run(() => _archiveItems.Count(x => !x.IsDeleted));
+        return await Task.Run(() => 
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var count = _archiveItems.Count(x => !x.IsDeleted);
+            sw.Stop();
+            
+            if (sw.ElapsedMilliseconds > 100) // 100ms以上は警告
+            {
+                _logger.LogWarning("[PERF-DB] Slow count query: {ElapsedTime}ms for {Count} items", 
+                    sw.ElapsedMilliseconds, count);
+            }
+            else
+            {
+                _logger.LogDebug("[PERF-DB] Fast count query: {ElapsedTime}ms for {Count} items", 
+                    sw.ElapsedMilliseconds, count);
+            }
+            
+            return count;
+        });
     }
 
     public async Task<IEnumerable<ArchiveItem>> GetArchiveItemsAsync(int offset, int limit)
@@ -796,12 +787,173 @@ public class DatabaseService : IDatabaseService
         {
             return await Task.Run(() =>
             {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                
+                // パフォーマンス最適化: ソートを除去して高速化
                 var query = _archiveItems.Query()
-                    .Where(x => !x.IsDeleted)
-                    .OrderByDescending(x => x.ScanDate)
+                    .Where(x => !x.IsDeleted) // IsDeletedインデックスを使用
                     .Skip(offset)
                     .Limit(limit);
-                return query.ToList();
+                    
+                var result = query.ToList();
+                sw.Stop();
+                
+                if (sw.ElapsedMilliseconds > 200) // 200ms以上は警告
+                {
+                    _logger.LogWarning("[PERF-DB] Slow archive query: {ElapsedTime}ms for offset={Offset}, limit={Limit}, results={Count}", 
+                        sw.ElapsedMilliseconds, offset, limit, result.Count);
+                }
+                else
+                {
+                    _logger.LogDebug("[PERF-DB] Fast archive query: {ElapsedTime}ms for offset={Offset}, limit={Limit}, results={Count}", 
+                        sw.ElapsedMilliseconds, offset, limit, result.Count);
+                }
+                
+                return result;
+            });
+        }
+        finally
+        {
+            _operationLock.Release();
+        }
+    }
+    
+    public async Task<IEnumerable<ArchiveItem>> GetArchiveItemsBatchAsync(int offset, int limit)
+    {
+        await _operationLock.WaitAsync();
+        try
+        {
+            return await Task.Run(() =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                
+                // 最適化されたバッチクエリ（ソート除去）
+                var result = _archiveItems.Query()
+                    .Where(x => !x.IsDeleted)
+                    .Skip(offset)
+                    .Limit(limit)
+                    .ToList();
+                    
+                sw.Stop();
+                
+                if (sw.ElapsedMilliseconds > 200) // 200ms以上は警告
+                {
+                    _logger.LogWarning("[PERF-DB] Slow archive batch query: {ElapsedTime}ms for offset={Offset}, limit={Limit}, results={Count}", 
+                        sw.ElapsedMilliseconds, offset, limit, result.Count);
+                }
+                else
+                {
+                    _logger.LogDebug("[PERF-DB] Fast archive batch query: {ElapsedTime}ms for offset={Offset}, limit={Limit}, results={Count}", 
+                        sw.ElapsedMilliseconds, offset, limit, result.Count);
+                }
+                
+                return result;
+            });
+        }
+        finally
+        {
+            _operationLock.Release();
+        }
+    }
+    
+    public async Task<IEnumerable<ArchiveItem>> GetArchiveItemsAfterDateAsync(DateTime? lastCreatedAt, int limit)
+    {
+        await _operationLock.WaitAsync();
+        try
+        {
+            return await Task.Run(() =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                
+                List<ArchiveItem> result;
+                
+                if (lastCreatedAt == null)
+                {
+                    // 最初のバッチ - CreatedAtインデックスでソート
+                    result = _archiveItems.Query()
+                        .Where(x => !x.IsDeleted)
+                        .OrderBy(x => x.CreatedAt) // インデックス使用で高速
+                        .Limit(limit)
+                        .ToList();
+                }
+                else
+                {
+                    // 続きのバッチ - CreatedAtインデックスで範囲検索（超高速）
+                    result = _archiveItems.Query()
+                        .Where(x => !x.IsDeleted && x.CreatedAt > lastCreatedAt)
+                        .OrderBy(x => x.CreatedAt) // インデックス使用で高速
+                        .Limit(limit)
+                        .ToList();
+                }
+                    
+                sw.Stop();
+                
+                if (sw.ElapsedMilliseconds > 100) // 100ms以上は警告（以前より厳しく）
+                {
+                    _logger.LogWarning("[PERF-DB] Slow indexed query: {ElapsedTime}ms for lastCreatedAt={LastCreatedAt}, limit={Limit}, results={Count}", 
+                        sw.ElapsedMilliseconds, lastCreatedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "null", limit, result.Count);
+                }
+                else
+                {
+                    _logger.LogDebug("[PERF-DB] Fast indexed query: {ElapsedTime}ms for lastCreatedAt={LastCreatedAt}, limit={Limit}, results={Count}", 
+                        sw.ElapsedMilliseconds, lastCreatedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "null", limit, result.Count);
+                }
+                
+                return result;
+            });
+        }
+        finally
+        {
+            _operationLock.Release();
+        }
+    }
+    
+    public async Task<IEnumerable<ArchiveItem>> GetArchiveItemsAfterIdAsync(string? lastId, int limit)
+    {
+        await _operationLock.WaitAsync();
+        try
+        {
+            return await Task.Run(() =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                
+                List<ArchiveItem> result;
+                
+                if (string.IsNullOrEmpty(lastId))
+                {
+                    // 最初のバッチ - IDでソート（文字列比較による順序）
+                    result = _archiveItems.Query()
+                        .Where(x => !x.IsDeleted)
+                        .OrderBy(x => x.Id)
+                        .Limit(limit)
+                        .ToList();
+                }
+                else
+                {
+                    // 続きのバッチ - offset-based pagination（確実で信頼性あり）
+                    var skip = int.Parse(lastId); // lastIdをoffsetとして使用
+                    result = _archiveItems.Query()
+                        .Where(x => !x.IsDeleted)
+                        .OrderBy(x => x.Id)
+                        .Skip(skip)
+                        .Limit(limit)
+                        .ToList();
+                }
+                    
+                sw.Stop();
+                
+                if (sw.ElapsedMilliseconds > 100) // 100ms以上は警告
+                {
+                    _logger.LogWarning("[PERF-DB] Slow ID-based query: {ElapsedTime}ms for lastId={LastId}, limit={Limit}, results={Count}", 
+                        sw.ElapsedMilliseconds, lastId?.ToString() ?? "null", limit, result.Count);
+                }
+                else
+                {
+                    _logger.LogDebug("[PERF-DB] Fast ID-based query: {ElapsedTime}ms for lastId={LastId}, limit={Limit}, results={Count}", 
+                        sw.ElapsedMilliseconds, lastId?.ToString() ?? "null", limit, result.Count);
+                }
+                
+                return result;
             });
         }
         finally
@@ -819,7 +971,6 @@ public class DatabaseService : IDatabaseService
             {
                 var query = _imageItems.Query()
                     .Where(x => !x.IsDeleted && !x.IsArchived)
-                    .OrderByDescending(x => x.ScanDate)
                     .Skip(offset)
                     .Limit(limit);
                 return query.ToList();
@@ -1202,6 +1353,7 @@ public class DatabaseService : IDatabaseService
     }
 
     #endregion
+    
 
     public void Dispose()
     {
