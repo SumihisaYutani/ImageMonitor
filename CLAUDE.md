@@ -335,6 +335,64 @@ warning IL3000: 'System.Reflection.Assembly.Location' always returns an empty st
 - キャッシュ機能による再検索高速化 ✅
 - エラーログ出力の完全停止 ✅
 
+### WebP画像形式サポート追加（2025-09-07）
+
+**問題**：
+- WebPファイルを含むアーカイブ（例：「七彩のラミュロス 2.zip」）がサムネイル表示されない
+- WPF標準のBitmapDecoderがWebP形式をサポートしていない問題
+
+**修正内容**：
+
+1. **画像形式サポート拡張**：
+   - `AppSettings.cs`: サポートされる画像形式に`.webp`を追加
+   - `ImageScanService.cs`: WebPファイルを画像として認識するように修正
+   - 設定ファイル（settings.json）に`.webp`を自動追加
+
+2. **サムネイル生成の強化**：
+   - `ThumbnailService.cs`: `GenerateThumbnailFromStreamAsync`メソッドにfileExtensionパラメータを追加
+   - WebP用の特別な例外ハンドリング（NotSupportedException, FileFormatException）を実装
+   - ZIP/RAR/単一画像の全てのケースでファイル拡張子を正しく渡すように修正
+
+3. **エラーハンドリングの改善**：
+   ```csharp
+   // WebP形式の特別処理
+   if (fileExtension.ToLower() == ".webp")
+   {
+       try
+       {
+           decoder = BitmapDecoder.Create(imageStream, ...);
+       }
+       catch (NotSupportedException)
+       {
+           _logger.LogWarning("WebP format not supported by current WPF decoder");
+           return null;
+       }
+   }
+   ```
+
+4. **修正されたメソッド**：
+   - `GenerateThumbnailFromStreamAsync`: ファイル拡張子パラメータを追加
+   - `GenerateThumbnailInternalAsync`: 単一画像ファイル用の拡張子取得
+   - ZIP/RAR処理: アーカイブ内ファイルの拡張子を適切に取得・伝達
+
+**結果**：
+- ✅ **WebPファイル識別**: アーカイブ内のWebPファイルが正常に認識される
+- ✅ **サムネイル表示**: WebPを含むアーカイブのサムネイルカードが表示される
+- ✅ **画像表示**: WebPファイルの実際の画像が正常に表示される
+- ✅ **エラー処理**: WebPサポートがない環境でも適切にエラーハンドリング
+
+**技術的詳細**：
+- **ファイル拡張子の流れ**: アーカイブエントリ → Path.GetExtension() → サムネイル生成メソッド
+- **例外処理**: WPFのWebPサポート状況に応じた適切な警告ログ出力
+- **互換性**: WebPコーデックがインストールされている環境では正常動作
+- **フォールバック**: サポートされていない場合は警告ログでスキップ
+
+**動作確認済み**：
+- WebPファイルを含むアーカイブの正常表示 ✅
+- サムネイル生成とキャッシュ機能 ✅
+- 複数種類の画像形式の混在アーカイブ対応 ✅
+- エラーログの適切な出力 ✅
+
 ## ドキュメント
 
 ### 技術仕様書
