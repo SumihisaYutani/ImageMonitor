@@ -11,6 +11,10 @@ public partial class MainWindow : Window
 
     public MainWindow(MainViewModel viewModel)
     {
+        // デバッグ: MainWindowインスタンス生成をログ出力
+        System.Diagnostics.Debug.WriteLine($"[DEBUG] MainWindow constructor called - Instance: {this.GetHashCode()}");
+        Console.WriteLine($"[DEBUG] MainWindow constructor called - Instance: {this.GetHashCode()}");
+        
         ViewModel = viewModel;
         DataContext = ViewModel;
         

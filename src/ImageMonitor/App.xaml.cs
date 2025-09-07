@@ -37,6 +37,22 @@ public partial class App : Application
 
         try
         {
+            // デバッグ: WPFイベント監視を設定
+            this.Startup += (s, args) => {
+                Log.Information($"[DEBUG] WPF Application.Startup event fired");
+                Console.WriteLine($"[DEBUG] WPF Application.Startup event fired");
+            };
+            
+            this.Activated += (s, args) => {
+                Log.Information($"[DEBUG] WPF Application.Activated event fired");
+                Console.WriteLine($"[DEBUG] WPF Application.Activated event fired");
+            };
+            
+            // ウィンドウ生成監視
+            this.MainWindow = null; // 明示的にnullに設定
+            Log.Information($"[DEBUG] Application.MainWindow set to null explicitly");
+            Console.WriteLine($"[DEBUG] Application.MainWindow set to null explicitly");
+            
             // Global exception handling
             AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
             {
@@ -65,8 +81,34 @@ public partial class App : Application
             stepTimes.Add(("Database initialization", appStartStopwatch.ElapsedMilliseconds));
 
             // Show main window
+            Log.Information("[DEBUG] About to get MainWindow from DI container");
+            Console.WriteLine("[DEBUG] About to get MainWindow from DI container");
+            
             var mainWindow = _host.Services.GetRequiredService<MainWindow>();
+            
+            Log.Information($"[DEBUG] MainWindow retrieved from DI - Instance: {mainWindow.GetHashCode()}");
+            Console.WriteLine($"[DEBUG] MainWindow retrieved from DI - Instance: {mainWindow.GetHashCode()}");
+            
+            Log.Information($"[DEBUG] About to call mainWindow.Show()");
+            Console.WriteLine($"[DEBUG] About to call mainWindow.Show()");
+            
             mainWindow.Show();
+            
+            Log.Information($"[DEBUG] mainWindow.Show() completed");
+            Console.WriteLine($"[DEBUG] mainWindow.Show() completed");
+            
+            // アプリケーションのウィンドウ数を確認
+            var windowCount = Application.Current.Windows.Count;
+            Log.Information($"[DEBUG] Total application windows: {windowCount}");
+            Console.WriteLine($"[DEBUG] Total application windows: {windowCount}");
+            
+            // 各ウィンドウの詳細をログ出力
+            for (int i = 0; i < Application.Current.Windows.Count; i++)
+            {
+                var window = Application.Current.Windows[i];
+                Log.Information($"[DEBUG] Window {i}: Type={window.GetType().Name}, Title={window.Title}, Hash={window.GetHashCode()}, Visible={window.IsVisible}");
+                Console.WriteLine($"[DEBUG] Window {i}: Type={window.GetType().Name}, Title={window.Title}, Hash={window.GetHashCode()}, Visible={window.IsVisible}");
+            }
             stepTimes.Add(("Main window creation", appStartStopwatch.ElapsedMilliseconds));
 
             appStartStopwatch.Stop();
@@ -88,7 +130,6 @@ public partial class App : Application
                 Log.Warning("Slow application startup: {TotalTime}ms", totalStartupTime);
             }
 
-            base.OnStartup(e);
         }
         catch (Exception ex)
         {
