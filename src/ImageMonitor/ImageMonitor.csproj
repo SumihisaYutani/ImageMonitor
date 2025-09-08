@@ -49,6 +49,7 @@
     
     <!-- WPF Folder Dialog -->
     <PackageReference Include="Microsoft.WindowsAPICodePack-Shell" Version="1.1.0" />
+    <PackageReference Include="VirtualizingWrapPanel" Version="2.3.1" />
   </ItemGroup>
 
 </Project>

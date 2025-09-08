@@ -2,6 +2,8 @@ using ImageMonitor.ViewModels;
 using ImageMonitor.Services;
 using ImageMonitor.Models;
 using System.Windows.Input;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ImageMonitor;
 
@@ -190,6 +192,23 @@ public partial class MainWindow : Window
         }
     }
 
+    // パフォーマンス測定用：最初の画像が読み込まれた時を記録
+    private static readonly System.Diagnostics.Stopwatch FirstCardTimer = System.Diagnostics.Stopwatch.StartNew();
+    private static int FirstCardLoaded = 0;
+
+    private void OnImageLoaded(object sender, RoutedEventArgs e)
+    {
+        if (Interlocked.Exchange(ref FirstCardLoaded, 1) == 0)
+        {
+            FirstCardTimer.Stop();
+            System.Diagnostics.Debug.WriteLine($"[PERF] First thumbnail card loaded in {FirstCardTimer.ElapsedMilliseconds}ms");
+            
+            if (App.AppHost?.Services.GetService<ILogger<MainWindow>>() is ILogger<MainWindow> logger)
+            {
+                logger.LogInformation("[PERF] First thumbnail card displayed in {ElapsedMs}ms", FirstCardTimer.ElapsedMilliseconds);
+            }
+        }
+    }
 
     #endregion
 }

@@ -335,6 +335,52 @@ warning IL3000: 'System.Reflection.Assembly.Location' always returns an empty st
 - キャッシュ機能による再検索高速化 ✅
 - エラーログ出力の完全停止 ✅
 
+### アーカイブサムネイル生成の強化（2025-09-08）
+
+**問題**：
+- 破損した画像データによる`OverflowException`でサムネイル生成失敗
+- アーカイブ内の最初の画像が破損している場合、サムネイル表示されない
+- 複数のファイルで「値が範囲外です (0x88982F05)」エラーが発生
+
+**根本原因**：
+```
+System.OverflowException: 処理中に、イメージ データによりオーバーフローが生成されました。
+---> System.Runtime.InteropServices.COMException (0x88982F05): 値が範囲外です。
+```
+WPFの`BitmapDecoder`が破損したイメージヘッダーを解析する際、計算結果がint32範囲を超えてOverflowExceptionが発生。
+
+**修正内容**：
+
+1. **複数画像フォールバック機能の実装**：
+   ```csharp
+   // ZIP用改良 - 最大5つの画像を試行
+   var maxAttempts = Math.Min(5, imageEntries.Count);
+   for (int i = 0; i < maxAttempts; i++)
+   {
+       var result = await GenerateThumbnailFromStreamAsync(memoryStream, thumbnailPath, size, imageExtension);
+       if (result != null) return result; // 成功したら即座に返す
+   }
+   ```
+
+2. **RAR用改良**：
+   - ZIP同様の複数画像試行ロジックを実装
+   - `SharpCompress`ライブラリを使用した安全な処理
+
+3. **エラーハンドリングの強化**：
+   - 個別画像の例外を捕捉し、次の画像を試行
+   - デバッグレベルでの詳細ログ出力
+   - 最終的に全て失敗した場合の警告ログ
+
+**効果**：
+- ✅ **サムネイル表示成功率向上**: 最初の画像が破損していても他の画像で生成
+- ✅ **OverflowException対応**: 破損画像をスキップして次を試行
+- ✅ **ログの改善**: デバッグ情報で試行過程を追跡可能
+- ✅ **パフォーマンス維持**: 失敗時のみ追加処理、成功時は従来通り高速
+
+**対象ファイル**：
+- `ThumbnailService.cs:GenerateZipThumbnailAsync()` - ZIP用複数画像試行
+- `ThumbnailService.cs:GenerateRarThumbnailAsync()` - RAR用複数画像試行
+
 ### WebP画像形式サポート追加（2025-09-07）
 
 **問題**：

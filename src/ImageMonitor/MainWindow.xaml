@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ImageMonitor"
         xmlns:converters="clr-namespace:ImageMonitor.Converters"
+        xmlns:vwp="clr-namespace:WpfToolkit.Controls;assembly=VirtualizingWrapPanel"
         mc:Ignorable="d"
         x:Name="RootWindow"
         Title="ImageMonitor" Height="800" Width="1200"
@@ -20,11 +21,8 @@
             <Setter Property="CornerRadius" Value="4"/>
             <Setter Property="Margin" Value="4"/>
             <Setter Property="Padding" Value="8"/>
-            <Setter Property="Effect">
-                <Setter.Value>
-                    <DropShadowEffect ShadowDepth="2" BlurRadius="4" Opacity="0.3"/>
-                </Setter.Value>
-            </Setter>
+            <Setter Property="BorderBrush" Value="LightGray"/>
+            <Setter Property="BorderThickness" Value="1"/>
         </Style>
         
         <Style x:Key="IconButtonStyle" TargetType="Button">
@@ -113,12 +111,12 @@
                      SelectedItem="{Binding SelectedDisplayItem}"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      ScrollViewer.CanContentScroll="True"
-                     VirtualizingStackPanel.IsVirtualizing="True"
-                     VirtualizingStackPanel.VirtualizationMode="Recycling">
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Recycling">
                 
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <WrapPanel Orientation="Horizontal"/>
+                        <vwp:VirtualizingWrapPanel Orientation="Horizontal"/>
                     </ItemsPanelTemplate>
                 </ListBox.ItemsPanel>
                 
@@ -137,10 +135,10 @@
                                 <Border Grid.Row="0" Background="LightGray" CornerRadius="2">
                                     <Image Source="{Binding ThumbnailPath}" 
                                            Stretch="Uniform" 
-                                           RenderOptions.BitmapScalingMode="HighQuality"
-                                           RenderOptions.EdgeMode="Aliased"
+                                           RenderOptions.BitmapScalingMode="Linear"
                                            UseLayoutRounding="True"
-                                           SnapsToDevicePixels="True"/>
+                                           SnapsToDevicePixels="True"
+                                           Loaded="OnImageLoaded"/>
                                 </Border>
                                 
                                 <!-- Information -->

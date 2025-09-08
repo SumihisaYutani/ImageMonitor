@@ -252,14 +252,10 @@ public partial class MainViewModel : ObservableObject
             {
                 _logger.LogDebug("Using cached search results for query: {Query}", searchQuery);
                 
-                // キャッシュされた結果をUIに表示
+                // キャッシュされた結果をUIに表示（パフォーマンス最適化）
                 await Application.Current.Dispatcher.InvokeAsync(() =>
                 {
-                    DisplayItems.Clear();
-                    foreach (var item in cachedResults)
-                    {
-                        DisplayItems.Add(item);
-                    }
+                    DisplayItems = new ObservableCollection<IDisplayItem>(cachedResults);
                     TotalItems = DisplayItems.Count;
                     StatusText = $"Found {TotalItems} images (cached)";
                 });
@@ -286,14 +282,10 @@ public partial class MainViewModel : ObservableObject
             }
             _searchCache[cacheKey] = resultsList;
             
-            // UIスレッドでObservableCollectionを更新
+            // UIスレッドでObservableCollectionを更新（パフォーマンス最適化）
             await Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                DisplayItems.Clear();
-                foreach (var item in resultsList)
-                {
-                    DisplayItems.Add(item);
-                }
+                DisplayItems = new ObservableCollection<IDisplayItem>(resultsList);
                 TotalItems = DisplayItems.Count;
                 StatusText = $"Found {TotalItems} images";
             });
@@ -435,24 +427,13 @@ public partial class MainViewModel : ObservableObject
             var sortedArchiveItems = ApplyUILevelSort(initialArchiveItemsList.Cast<IDisplayItem>()).ToList();
             var sortedImageItems = ApplyUILevelSort(regularImageItemsList.Cast<IDisplayItem>()).ToList();
             
-            // UIスレッドでObservableCollectionを更新
+            // UIスレッドでObservableCollectionを一括更新（パフォーマンス最適化）
             await Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                // Clear existing items
-                DisplayItems.Clear();
-                _logger.LogDebug("Cleared existing items");
-                
-                foreach (var item in sortedArchiveItems)
-                {
-                    DisplayItems.Add(item);
-                }
-                _logger.LogDebug("Added {Count} sorted archive items to UI collection", sortedArchiveItems.Count);
-                
-                foreach (var item in sortedImageItems)
-                {
-                    DisplayItems.Add(item);
-                }
-                _logger.LogDebug("Added {Count} sorted image items to UI collection", sortedImageItems.Count);
+                var allItems = sortedArchiveItems.Concat(sortedImageItems).ToList();
+                DisplayItems = new ObservableCollection<IDisplayItem>(allItems);
+                _logger.LogDebug("Replaced DisplayItems with {Count} items (Archives: {ArchiveCount}, Images: {ImageCount})", 
+                    allItems.Count, sortedArchiveItems.Count, sortedImageItems.Count);
             });
             
             stepTimes.Add(("UI collection update", loadStopwatch.ElapsedMilliseconds));
@@ -530,13 +511,12 @@ public partial class MainViewModel : ObservableObject
                 // UIレベルでソートしてから追加
                 var sortedItems = ApplyUILevelSort(itemsList).ToList();
                 
-                // Add sorted items to UI thread
+                // Add sorted items to UI thread in batch (performance optimization)
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    foreach (var item in sortedItems)
-                    {
-                        DisplayItems.Add(item);
-                    }
+                    var currentItems = DisplayItems.ToList();
+                    currentItems.AddRange(sortedItems);
+                    DisplayItems = new ObservableCollection<IDisplayItem>(currentItems);
                     StatusText = $"Loaded {DisplayItems.Count} of {TotalItems} images";
                 });
                 
@@ -661,9 +641,16 @@ public partial class MainViewModel : ObservableObject
                 {
                     try
                     {
-                        // TODO: Fix thumbnail regeneration - interface compatibility issues
-                        // Skip thumbnail regeneration for now to enable build
-                        _logger.LogDebug("Skipping thumbnail regeneration due to interface compatibility");
+                        // サムネイル再生成を実装
+                        if (item is ArchiveItem archiveItem)
+                        {
+                            await _thumbnailService.GenerateArchiveThumbnailAsync(archiveItem.FilePath, ThumbnailSize);
+                        }
+                        else if (item is ImageItem imageItem)
+                        {
+                            await _thumbnailService.GenerateThumbnailAsync(imageItem.FilePath, ThumbnailSize);
+                        }
+                        _logger.LogDebug("Regenerated thumbnail for {FilePath} at size {Size}", item.FilePath, ThumbnailSize);
                     }
                     catch (Exception ex)
                     {
@@ -686,6 +673,31 @@ public partial class MainViewModel : ObservableObject
             {
                 await Task.WhenAll(thumbnailTasks);
             }
+            
+            // サムネイル再生成後にThumbnailPathを更新してUIを更新
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                // 各アイテムのThumbnailPathを新しいサイズで更新
+                var updatedItems = DisplayItems.Select(item =>
+                {
+                    if (item is ArchiveItem archiveItem)
+                    {
+                        archiveItem.ThumbnailPath = _thumbnailService.GetThumbnailPath(archiveItem.FilePath, ThumbnailSize);
+                        return archiveItem;
+                    }
+                    else if (item is ImageItem imageItem)
+                    {
+                        imageItem.ThumbnailPath = _thumbnailService.GetThumbnailPath(imageItem.FilePath, ThumbnailSize);
+                        return imageItem;
+                    }
+                    return item;
+                }).ToList();
+                
+                // UIを完全に更新
+                DisplayItems = new ObservableCollection<IDisplayItem>(updatedItems);
+                _logger.LogInformation("UI refreshed after thumbnail regeneration for {Count} items with new thumbnail paths (size: {Size})", 
+                    updatedItems.Count, ThumbnailSize);
+            });
         }
         catch (Exception ex)
         {

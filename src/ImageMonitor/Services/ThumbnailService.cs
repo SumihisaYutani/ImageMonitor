@@ -342,7 +342,7 @@ public class ThumbnailService : IThumbnailService
         {
             using var archive = System.IO.Compression.ZipFile.OpenRead(zipPath);
             
-            // アーカイブ内の画像ファイルを取得し、名前順でソート（一番若番を取得）
+            // アーカイブ内の画像ファイルを取得し、名前順でソート
             var imageEntries = archive.Entries
                 .Where(entry => !string.IsNullOrEmpty(entry.Name) && 
                               SupportedImageExtensions.Contains(Path.GetExtension(entry.Name).ToLowerInvariant()))
@@ -355,18 +355,41 @@ public class ThumbnailService : IThumbnailService
                 return null;
             }
 
-            // 最初（最も若番）の画像エントリを使用
-            var firstImageEntry = imageEntries.First();
-            var imageExtension = Path.GetExtension(firstImageEntry.FullName);
-            _logger.LogDebug("Using first image for thumbnail: {ImagePath} in {ZipPath}", 
-                firstImageEntry.FullName, zipPath);
+            // 複数の画像を試行してサムネイル生成（最大5つまで）
+            var maxAttempts = Math.Min(5, imageEntries.Count);
+            for (int i = 0; i < maxAttempts; i++)
+            {
+                var imageEntry = imageEntries[i];
+                var imageExtension = Path.GetExtension(imageEntry.FullName);
+                
+                try
+                {
+                    _logger.LogDebug("Attempting thumbnail from image {Index}: {ImagePath} in {ZipPath}", 
+                        i + 1, imageEntry.FullName, zipPath);
 
-            using var entryStream = firstImageEntry.Open();
-            using var memoryStream = new MemoryStream();
-            await entryStream.CopyToAsync(memoryStream);
-            memoryStream.Seek(0, SeekOrigin.Begin);
+                    using var entryStream = imageEntry.Open();
+                    using var memoryStream = new MemoryStream();
+                    await entryStream.CopyToAsync(memoryStream);
+                    memoryStream.Seek(0, SeekOrigin.Begin);
 
-            return await GenerateThumbnailFromStreamAsync(memoryStream, thumbnailPath, size, imageExtension);
+                    var result = await GenerateThumbnailFromStreamAsync(memoryStream, thumbnailPath, size, imageExtension);
+                    if (result != null)
+                    {
+                        _logger.LogDebug("Successfully generated thumbnail from image {Index}: {ImagePath} in {ZipPath}", 
+                            i + 1, imageEntry.FullName, zipPath);
+                        return result;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to generate thumbnail from image {Index}: {ImagePath} in {ZipPath}, trying next image", 
+                        i + 1, imageEntry.FullName, zipPath);
+                }
+            }
+            
+            _logger.LogWarning("Failed to generate thumbnail from any of {MaxAttempts} images in archive: {ZipPath}", 
+                maxAttempts, zipPath);
+            return null;
         }
         catch (Exception ex)
         {
@@ -381,7 +404,7 @@ public class ThumbnailService : IThumbnailService
         {
             using var archive = ArchiveFactory.Open(rarPath);
             
-            // アーカイブ内の画像ファイルを取得し、名前順でソート（一番若番を取得）
+            // アーカイブ内の画像ファイルを取得し、名前順でソート
             var imageEntries = archive.Entries
                 .Where(entry => !entry.IsDirectory && 
                               !string.IsNullOrEmpty(entry.Key) && 
@@ -395,18 +418,41 @@ public class ThumbnailService : IThumbnailService
                 return null;
             }
 
-            // 最初（最も若番）の画像エントリを使用
-            var firstImageEntry = imageEntries.First();
-            var imageExtension = Path.GetExtension(firstImageEntry.Key);
-            _logger.LogDebug("Using first image for thumbnail: {ImagePath} in {RarPath}", 
-                firstImageEntry.Key, rarPath);
+            // 複数の画像を試行してサムネイル生成（最大5つまで）
+            var maxAttempts = Math.Min(5, imageEntries.Count);
+            for (int i = 0; i < maxAttempts; i++)
+            {
+                var imageEntry = imageEntries[i];
+                var imageExtension = Path.GetExtension(imageEntry.Key);
+                
+                try
+                {
+                    _logger.LogDebug("Attempting thumbnail from image {Index}: {ImagePath} in {RarPath}", 
+                        i + 1, imageEntry.Key, rarPath);
 
-            using var entryStream = firstImageEntry.OpenEntryStream();
-            using var memoryStream = new MemoryStream();
-            await entryStream.CopyToAsync(memoryStream);
-            memoryStream.Seek(0, SeekOrigin.Begin);
+                    using var entryStream = imageEntry.OpenEntryStream();
+                    using var memoryStream = new MemoryStream();
+                    await entryStream.CopyToAsync(memoryStream);
+                    memoryStream.Seek(0, SeekOrigin.Begin);
 
-            return await GenerateThumbnailFromStreamAsync(memoryStream, thumbnailPath, size, imageExtension);
+                    var result = await GenerateThumbnailFromStreamAsync(memoryStream, thumbnailPath, size, imageExtension);
+                    if (result != null)
+                    {
+                        _logger.LogDebug("Successfully generated thumbnail from image {Index}: {ImagePath} in {RarPath}", 
+                            i + 1, imageEntry.Key, rarPath);
+                        return result;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to generate thumbnail from image {Index}: {ImagePath} in {RarPath}, trying next image", 
+                        i + 1, imageEntry.Key, rarPath);
+                }
+            }
+            
+            _logger.LogWarning("Failed to generate thumbnail from any of {MaxAttempts} images in RAR archive: {RarPath}", 
+                maxAttempts, rarPath);
+            return null;
         }
         catch (Exception ex)
         {
