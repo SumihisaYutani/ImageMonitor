@@ -96,6 +96,19 @@
             <ToggleButton Content="📋 Properties" IsChecked="{Binding IsPropertiesPanelVisible, Mode=TwoWay}"
                          Background="Transparent" BorderThickness="0" Padding="8" Margin="4" Cursor="Hand"
                          ToolTip="プロパティパネルの表示/非表示を切り替え"/>
+            
+            <Separator/>
+            
+            <!-- Random List Buttons -->
+            <Button Content="🎲 Create Random" Command="{Binding CreateRandomListCommand}" 
+                    Style="{StaticResource IconButtonStyle}" 
+                    ToolTip="表示中のサムネイルからランダムリストを作成"/>
+            <Button Content="⏭ Next" Command="{Binding OpenNextRandomCommand}" 
+                    Style="{StaticResource IconButtonStyle}" 
+                    ToolTip="ランダムリストの次のアイテムを開く"/>
+            <Button Content="⏮ Previous" Command="{Binding OpenPreviousRandomCommand}" 
+                    Style="{StaticResource IconButtonStyle}" 
+                    ToolTip="ランダムリストの前のアイテムを開く"/>
         </ToolBar>
 
         <!-- Main Content -->

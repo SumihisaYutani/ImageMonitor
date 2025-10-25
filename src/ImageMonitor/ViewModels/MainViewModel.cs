@@ -48,6 +48,16 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _isPropertiesPanelVisible = true;
 
+    // ランダムリスト機能関連
+    [ObservableProperty]
+    private List<IDisplayItem> _randomList = new();
+    
+    [ObservableProperty]
+    private int _currentRandomIndex = -1;
+    
+    [ObservableProperty]
+    private bool _isRandomListActive = false;
+
     // 検索結果キャッシュ
     private readonly Dictionary<string, IEnumerable<ArchiveItem>> _searchCache = new();
     private string _lastSearchQuery = string.Empty;
@@ -736,5 +746,111 @@ public partial class MainViewModel : ObservableObject
             // デフォルト: ScanDateで最新順（データベースソートから移行）
             _ => items.OrderByDescending(x => x.ScanDate)
         };
+    }
+
+    /// <summary>
+    /// 表示されているサムネイルからランダムリストを作成
+    /// </summary>
+    [RelayCommand]
+    private async Task CreateRandomListAsync()
+    {
+        try
+        {
+            if (!DisplayItems.Any())
+            {
+                StatusText = "ランダムリストを作成するアイテムがありません";
+                return;
+            }
+
+            // 現在表示されているアイテムからランダムリストを作成
+            var random = new Random();
+            RandomList = DisplayItems.ToList().OrderBy(x => random.Next()).ToList();
+            CurrentRandomIndex = 0;
+            IsRandomListActive = true;
+
+            // 最初のアイテムを選択（ファイルは開かない）
+            if (RandomList.Any())
+            {
+                SelectedDisplayItem = RandomList[0];
+            }
+
+            StatusText = $"ランダムリスト作成完了: {RandomList.Count}個のアイテム";
+            _logger.LogInformation("Random list created with {Count} items", RandomList.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create random list");
+            StatusText = $"ランダムリスト作成失敗: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// ランダムリストの次のアイテムを開く
+    /// </summary>
+    [RelayCommand]
+    private async Task OpenNextRandomAsync()
+    {
+        try
+        {
+            if (!IsRandomListActive || !RandomList.Any())
+            {
+                StatusText = "ランダムリストが作成されていません";
+                return;
+            }
+
+            if (CurrentRandomIndex >= RandomList.Count - 1)
+            {
+                StatusText = "ランダムリストの最後のアイテムです";
+                return;
+            }
+
+            CurrentRandomIndex++;
+            var nextItem = RandomList[CurrentRandomIndex];
+            SelectedDisplayItem = nextItem;
+            await OpenImageAsync(nextItem);
+
+            StatusText = $"ランダムリスト: {CurrentRandomIndex + 1}/{RandomList.Count}";
+            _logger.LogDebug("Opened next random item: {Index}/{Total}", CurrentRandomIndex + 1, RandomList.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to open next random item");
+            StatusText = $"次のアイテムを開けませんでした: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// ランダムリストの前のアイテムを開く
+    /// </summary>
+    [RelayCommand]
+    private async Task OpenPreviousRandomAsync()
+    {
+        try
+        {
+            if (!IsRandomListActive || !RandomList.Any())
+            {
+                StatusText = "ランダムリストが作成されていません";
+                return;
+            }
+
+            if (CurrentRandomIndex <= 0)
+            {
+                StatusText = "ランダムリストの最初のアイテムです";
+                return;
+            }
+
+            CurrentRandomIndex--;
+            var previousItem = RandomList[CurrentRandomIndex];
+            SelectedDisplayItem = previousItem;
+            await OpenImageAsync(previousItem);
+
+            StatusText = $"ランダムリスト: {CurrentRandomIndex + 1}/{RandomList.Count}";
+            _logger.LogDebug("Opened previous random item: {Index}/{Total}", CurrentRandomIndex + 1, RandomList.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to open previous random item");
+            StatusText = $"前のアイテムを開けませんでした: {ex.Message}";
+        }
     }
 }
